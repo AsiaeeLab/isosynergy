@@ -1,0 +1,760 @@
+---
+title: "02 — Isotonic Regression: From 1D to 2D Monotone Fitting"
+author: "Amir Asiaee"
+date: '`r format(Sys.Date(), "%B %d, %Y")`'
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 3
+    number_sections: true
+    theme: yeti
+    highlight: kate
+    code_folding: show
+params:
+  seed: 42
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  warning = FALSE,
+  message = FALSE,
+  fig.width = 10,
+  fig.height = 6
+)
+
+knitr::opts_knit$set(root.dir = normalizePath(".."))
+```
+
+# Introduction
+
+In Report 01, we learned how dose-response matrices are generated. Now we tackle the first computational component of our method: **fitting monotone (isotonic) surfaces** to noisy data.
+
+The key insight is that dose-response data should be *monotone*: as drug dose increases, the response should change in a consistent direction (e.g., viability decreases). This biological constraint can be enforced during fitting to regularize the estimate.
+
+In this report, we will:
+
+1. Start with **1D isotonic regression** as a warm-up (single drug dose-response)
+2. Understand how the Pool Adjacent Violators Algorithm (PAVA) works
+3. Extend to **2D isotonic regression** for drug combination matrices
+4. See how the 2D problem is formulated as a quadratic program (QP)
+5. Fit monotone surfaces to simulated data and verify constraints
+6. Explore how the fit behaves under different noise levels
+
+By the end, we should have confidence that our isotonic fitting functions work correctly and understand their properties.
+
+# Setup
+
+```{r load-packages}
+library(data.table)
+library(ggplot2)
+library(patchwork)
+library(Matrix)
+
+source("R/pipeline.R")
+
+set.seed(params$seed)
+cat("Using seed:", params$seed, "\n")
+```
+
+**Interpretation:** The analysis environment is ready, and the seed ensures the examples are reproducible.
+
+# Warm-up: 1D Isotonic Regression
+
+Before tackling 2D surfaces, let's build intuition with the simpler 1D case. This is exactly what we do when fitting a **single-drug dose-response curve**.
+
+## The 1D Problem
+
+Given noisy observations $y_1, \ldots, y_n$ at ordered doses $x_1 < x_2 < \cdots < x_n$, we want to find fitted values $\hat{y}_i$ that:
+
+1. Minimize squared error: $\sum_i (y_i - \hat{y}_i)^2$
+2. Satisfy monotonicity: $\hat{y}_1 \geq \hat{y}_2 \geq \cdots \geq \hat{y}_n$ (for decreasing)
+
+This is a **constrained least squares** problem with a beautiful closed-form solution.
+
+## Simulating 1D Dose-Response Data
+
+Let's create a simple single-drug dose-response curve.
+
+```{r simulate-1d-data}
+n <- 10  # Number of dose levels
+
+# True monotone decreasing signal
+dose_1d <- 1:n
+true_signal_1d <- 1 - 0.08 * dose_1d  # Linear decrease from ~0.92 to ~0.2
+
+# Add noise
+noise_1d <- rnorm(n, 0, 0.1)
+observed_1d <- true_signal_1d + noise_1d
+
+# Check: observations may violate monotonicity due to noise
+cat("True signal (monotone):", round(true_signal_1d, 3), "\n")
+cat("Observed (noisy):      ", round(observed_1d, 3), "\n")
+cat("Observed is monotone:  ", all(diff(observed_1d) <= 0), "\n")
+```
+
+**Interpretation:** We now have a clean monotone signal and a noisy version that can violate order. Next, we plot both to see those violations.
+
+```{r plot-1d-raw, fig.height=4}
+df_1d <- data.frame(
+  dose = dose_1d,
+  true = true_signal_1d,
+  observed = observed_1d
+)
+
+ggplot(df_1d) +
+  geom_line(aes(x = dose, y = true), color = "blue", linewidth = 1, linetype = "dashed") +
+  geom_point(aes(x = dose, y = observed), color = "red", size = 3) +
+  labs(x = "Dose level", y = "Response",
+       title = "1D Dose-Response: True vs Observed",
+       subtitle = "Blue dashed = true monotone signal, Red points = noisy observations") +
+  theme_minimal(base_size = 11)
+```
+
+**Interpretation:** The noisy observations (red) don't follow a perfectly decreasing pattern — some points are higher than their neighbors. Isotonic regression will "fix" these violations while staying as close as possible to the data.
+
+## The Pool Adjacent Violators Algorithm (PAVA)
+
+The classic algorithm for 1D isotonic regression is **PAVA**:
+
+1. Start with the observed values
+2. Find adjacent pairs that violate monotonicity (e.g., $y_i < y_{i+1}$ when we want decreasing)
+3. Replace the violating pair with their weighted average (pool them)
+4. Repeat until no violations remain
+
+R's built-in `isoreg()` implements PAVA. Our pipeline wraps it in `isoreg_monotone()`.
+
+```{r fit-1d-isotonic}
+# Use our wrapper function
+fit_1d <- isoreg_monotone(dose_1d, observed_1d, direction = "decreasing")
+
+cat("Fitted values:", round(fit_1d$yhat, 3), "\n")
+cat("Fitted is monotone:", all(diff(fit_1d$yhat) <= 1e-10), "\n")
+```
+
+**Interpretation:** The fitted values satisfy monotonicity by construction. The next plot shows how the isotonic fit pools adjacent violators.
+
+```{r plot-1d-fitted, fig.height=4}
+df_1d$fitted <- fit_1d$yhat
+
+ggplot(df_1d) +
+  geom_line(aes(x = dose, y = true), color = "blue", linewidth = 1, linetype = "dashed") +
+  geom_point(aes(x = dose, y = observed), color = "red", size = 3, alpha = 0.5) +
+  geom_step(aes(x = dose, y = fitted), color = "darkgreen", linewidth = 1.2) +
+  geom_point(aes(x = dose, y = fitted), color = "darkgreen", size = 2) +
+  labs(x = "Dose level", y = "Response",
+       title = "1D Isotonic Regression Fit",
+       subtitle = "Green step function = isotonic fit (monotone), respects order constraints") +
+  theme_minimal(base_size = 11)
+```
+
+**Interpretation:** The isotonic fit (green) is a **step function** that:
+
+- Never increases as dose increases (monotone decreasing)
+- Stays close to the observed data (least squares)
+- Has "flat" regions where adjacent violations were pooled
+
+Notice the characteristic "staircase" pattern — this is the hallmark of isotonic regression.
+
+## Comparing Errors
+
+How well does the isotonic fit recover the true signal compared to the raw observations?
+
+```{r compare-1d-errors}
+rmse_obs <- sqrt(mean((observed_1d - true_signal_1d)^2))
+rmse_iso <- sqrt(mean((fit_1d$yhat - true_signal_1d)^2))
+
+cat("RMSE (observed vs true):", round(rmse_obs, 4), "\n")
+cat("RMSE (isotonic vs true):", round(rmse_iso, 4), "\n")
+cat("Improvement:", round((rmse_obs - rmse_iso) / rmse_obs * 100, 1), "%\n")
+```
+
+**Interpretation:** The isotonic fit often has lower RMSE than the raw observations because it uses the monotonicity constraint to "denoise" the data. The improvement depends on noise level and how much the raw data violates monotonicity.
+
+## Why 1D is Easy, 2D is Hard
+
+In 1D, isotonic regression has:
+
+- **O(n) algorithm**: PAVA is linear time
+- **Unique solution**: The projection onto the monotone cone is well-defined
+- **Closed-form**: No iterative optimization needed
+
+In 2D, things are more complex:
+
+- **No simple algorithm**: PAVA doesn't directly extend to 2D
+- **Must use optimization**: We formulate as a quadratic program (QP)
+- **More constraints**: Both row and column monotonicity must hold simultaneously
+
+Let's now see how we handle the 2D case.
+
+# What is 2D Monotonicity?
+
+## Mathematical Definition
+
+A function $f(i, j)$ on a grid is **2D monotone decreasing** if:
+
+$$
+f(i+1, j) \leq f(i, j) \quad \text{and} \quad f(i, j+1) \leq f(i, j)
+$$
+
+for all valid indices. In other words, the function never increases as you move to higher dose indices in either dimension.
+
+For **2D monotone increasing**, the inequalities are reversed.
+
+## Biological Interpretation
+
+For viability data:
+
+- Moving right (increasing Drug B dose) → viability should stay same or decrease
+- Moving down (increasing Drug A dose) → viability should stay same or decrease
+
+This is the fundamental shape constraint that distinguishes isotonic regression from ordinary least squares.
+
+## Visual Example
+
+Let's create a simple example to illustrate.
+
+```{r monotone-example, fig.height=4}
+# A monotone decreasing surface
+I <- 5
+J <- 5
+mono_surface <- outer(1:I, 1:J, function(i, j) 1 - 0.1*i - 0.1*j)
+
+# A non-monotone surface (has a "bump")
+non_mono_surface <- mono_surface
+non_mono_surface[3, 3] <- non_mono_surface[3, 3] + 0.5  # Violates monotonicity
+
+plot_small_surface <- function(mat, title) {
+  dt <- data.table(
+    i = rep(1:nrow(mat), times = ncol(mat)),
+    j = rep(1:ncol(mat), each = nrow(mat)),
+    value = as.numeric(mat)
+  )
+  ggplot(dt, aes(x = j, y = i, fill = value)) +
+    geom_tile(color = "white") +
+    geom_text(aes(label = round(value, 2)), size = 3) +
+    scale_y_reverse() +
+    scale_fill_viridis_c(option = "plasma") +
+    labs(x = "j (Drug B)", y = "i (Drug A)", title = title, fill = "Value") +
+    theme_minimal(base_size = 10) +
+    theme(panel.grid = element_blank())
+}
+
+p1 <- plot_small_surface(mono_surface, "Monotone (valid)")
+p2 <- plot_small_surface(non_mono_surface, "Non-monotone (invalid)")
+
+p1 | p2
+```
+
+**Interpretation:** The left surface is monotone decreasing — values never increase as you move right or down. The right surface has a "bump" at (3,3) that violates monotonicity: the value 0.7 is higher than its neighbors to the left (0.2) and above (0.2).
+
+# The Quadratic Programming Formulation
+
+## The Optimization Problem
+
+Given observed data $\bar{Z}$ and weights $w$, we want to find the monotone surface $\theta$ that minimizes weighted squared error:
+
+$$
+\min_\theta \sum_{i,j} w_{ij} (\bar{Z}_{ij} - \theta_{ij})^2
+$$
+
+subject to:
+
+$$
+\theta_{i+1,j} - \theta_{i,j} \leq 0 \quad \text{(row monotonicity)}
+$$
+$$
+\theta_{i,j+1} - \theta_{i,j} \leq 0 \quad \text{(column monotonicity)}
+$$
+
+## Matrix Form
+
+This is a **quadratic program (QP)**. Let $\theta$ be the vectorized surface (column-major order, so $\theta$ is a vector of length $n = I \times J$), then:
+
+$$
+\min_\theta \frac{1}{2} \theta^T P \theta + q^T \theta
+$$
+
+**Important notation:** Here $w$ is the I×J weight matrix with elements $w_{ij}$, but in the QP formulation:
+
+- $\text{diag}(w)$ means: first vectorize $w$ into a length-$n$ vector (same column-major order as $\theta$), then create an $n \times n$ diagonal matrix with these values on the diagonal
+- This is NOT the diagonal of the original matrix $w$
+
+So: $P = 2 \cdot \text{diag}(\text{vec}(w))$ is an $n \times n$ diagonal matrix, and $q = -2 \cdot \text{vec}(w \odot \bar{Z})$ is a length-$n$ vector.
+
+The constraints are $A\theta \leq 0$ where $A$ encodes the difference constraints.
+
+## Looking at the Constraint Matrix
+
+Let's examine what the constraint matrix $A$ looks like for a small grid.
+
+```{r constraint-matrix-example}
+I <- 3
+J <- 3
+n <- I * J
+
+# Index function: (i,j) -> vector position (column-major)
+idx <- function(i, j) (j - 1L) * I + i
+
+# Build constraint matrix entries
+# Row constraints: theta[i+1,j] - theta[i,j] <= 0
+# Column constraints: theta[i,j+1] - theta[i,j] <= 0
+
+constraints <- list()
+row <- 0
+
+# Row differences (I-1)*J constraints
+for (j in 1:J) {
+  for (i in 1:(I-1)) {
+    row <- row + 1
+    constraints[[row]] <- data.frame(
+      constraint = row,
+      type = "row",
+      from = paste0("(", i, ",", j, ")"),
+      to = paste0("(", i+1, ",", j, ")"),
+      from_idx = idx(i, j),
+      to_idx = idx(i+1, j)
+    )
+  }
+}
+
+# Column differences I*(J-1) constraints
+for (j in 1:(J-1)) {
+  for (i in 1:I) {
+    row <- row + 1
+    constraints[[row]] <- data.frame(
+      constraint = row,
+      type = "col",
+      from = paste0("(", i, ",", j, ")"),
+      to = paste0("(", i, ",", j+1, ")"),
+      from_idx = idx(i, j),
+      to_idx = idx(i, j+1)
+    )
+  }
+}
+
+constr_df <- do.call(rbind, constraints)
+cat("Grid size:", I, "x", J, "=", n, "cells\n")
+cat("Number of constraints:", nrow(constr_df), "\n")
+cat("  Row constraints:", sum(constr_df$type == "row"), "\n")
+cat("  Column constraints:", sum(constr_df$type == "col"), "\n\n")
+knitr::kable(constr_df, caption = "Constraint structure for 3x3 grid")
+```
+
+**Interpretation:** For a 3×3 grid, we have 12 constraints: 6 row differences and 6 column differences. Each constraint says "the cell 'to' must be ≤ the cell 'from'".
+
+# Fitting a Monotone Surface
+
+## Generate Test Data
+
+Let's create a simple test case with known ground truth.
+
+```{r generate-test-data}
+I <- 8
+J <- 8
+
+# True monotone surface
+u_true <- -cumsum(abs(rnorm(I, 0.3, 0.1)))
+v_true <- -cumsum(abs(rnorm(J, 0.3, 0.1)))
+u_true <- u_true - mean(u_true)
+v_true <- v_true - mean(v_true)
+alpha_true <- 0
+
+Z_true <- matrix(alpha_true, I, J) +
+  matrix(u_true, I, J) +
+  matrix(v_true, I, J, byrow = TRUE)
+
+# Add noise
+noise_sigma <- 0.1
+Z_obs <- Z_true + rnorm(I*J, 0, noise_sigma)
+Z_obs_mat <- matrix(Z_obs, I, J)
+
+# Uniform weights
+w <- matrix(1, I, J)
+
+cat("True surface range:", round(range(Z_true), 3), "\n")
+cat("Observed data range:", round(range(Z_obs), 3), "\n")
+```
+
+## Fit the Isotonic Surface
+
+Now we use our `isotonic_2d_fit()` function.
+
+```{r fit-isotonic}
+fit <- isotonic_2d_fit(
+  barZ = Z_obs_mat,
+  w = w,
+  direction = "decreasing",
+  osqp_pars = list(eps_abs = 1e-8, eps_rel = 1e-8, max_iter = 20000)
+)
+
+cat("OSQP status:", fit$status, "\n")
+cat("Objective value:", round(fit$objective, 4), "\n")
+cat("Fitted surface range:", round(range(fit$theta), 3), "\n")
+```
+
+## Verify Monotonicity
+
+The most important check: does the fitted surface actually satisfy monotonicity?
+
+```{r verify-monotonicity}
+theta <- fit$theta
+
+# Check row differences (should all be <= 0 for decreasing)
+row_diffs <- theta[-1, ] - theta[-I, ]
+max_row_violation <- max(row_diffs)
+
+# Check column differences
+col_diffs <- theta[, -1] - theta[, -J]
+max_col_violation <- max(col_diffs)
+
+cat("Max row violation:", format(max_row_violation, scientific = TRUE), "\n")
+cat("Max col violation:", format(max_col_violation, scientific = TRUE), "\n")
+cat("Monotonicity satisfied:", max_row_violation <= 1e-6 && max_col_violation <= 1e-6, "\n")
+
+# Use the built-in check function
+is_mono <- check_monotone_2d(theta, direction = "decreasing", tol = 1e-6)
+cat("check_monotone_2d() result:", is_mono, "\n")
+```
+
+**Interpretation:** The violations are at numerical precision level (~10^-10), confirming that OSQP successfully enforced the monotonicity constraints.
+
+## Visual Comparison
+
+Let's compare the three surfaces: true signal, noisy observations, and isotonic fit.
+
+**Note:** In this section, we're using a purely **additive** signal (no interaction/synergy bump) plus noise. This tests whether the isotonic fit can recover a monotone surface from noisy data. We'll explore data with synergy in later reports.
+
+```{r compare-surfaces, fig.height=4}
+plot_surface <- function(mat, title, limits = NULL) {
+  dt <- data.table(
+    i = rep(1:nrow(mat), times = ncol(mat)),
+    j = rep(1:ncol(mat), each = nrow(mat)),
+    value = as.numeric(mat)
+  )
+  p <- ggplot(dt, aes(x = j, y = i, fill = value)) +
+    geom_raster() +
+    scale_y_reverse() +
+    labs(x = "j", y = "i", title = title, fill = "Z") +
+    theme_minimal(base_size = 10) +
+    theme(panel.grid = element_blank())
+
+  if (!is.null(limits)) {
+    p <- p + scale_fill_viridis_c(option = "plasma", limits = limits)
+  } else {
+    p <- p + scale_fill_viridis_c(option = "plasma")
+  }
+  p
+}
+
+# Use common color scale
+zlim <- range(c(Z_true, Z_obs_mat, theta))
+
+p1 <- plot_surface(Z_true, "True Signal", zlim)
+p2 <- plot_surface(Z_obs_mat, "Observed (noisy)", zlim)
+p3 <- plot_surface(theta, "Isotonic Fit", zlim)
+
+p1 | p2 | p3
+```
+
+**Interpretation:** The isotonic fit (right) is smoother than the noisy observations (middle) but preserves the overall structure of the true signal (left). The monotonicity constraint acts as a form of regularization.
+
+**A note on synergy and monotonicity:** A raw interaction bump added to an additive surface can break monotonicity if it is strong enough. To avoid that mismatch, we now **project the candidate surface onto the monotone cone** and define interaction as the non‑additive component of the projected surface. This guarantees the true underlying signal is monotone by construction, while the observed data can still violate monotonicity due to noise. The isotonic fit is therefore well aligned with the data‑generating model.
+
+## Residual Analysis
+
+How well does the fit capture the signal?
+
+```{r residual-analysis, fig.height=4}
+residuals <- Z_obs_mat - theta
+errors_vs_true <- theta - Z_true
+
+cat("Residuals (obs - fit):\n")
+cat("  Mean:", round(mean(residuals), 4), "\n")
+cat("  SD:", round(sd(residuals), 4), "\n")
+cat("  Range:", round(range(residuals), 3), "\n\n")
+
+cat("Errors vs true signal:\n")
+cat("  Mean:", round(mean(errors_vs_true), 4), "\n")
+cat("  SD:", round(sd(errors_vs_true), 4), "\n")
+cat("  RMSE:", round(sqrt(mean(errors_vs_true^2)), 4), "\n")
+
+p_resid <- plot_surface(residuals, "Residuals (obs - fit)") +
+  scale_fill_gradient2(low = "blue", mid = "white", high = "red", midpoint = 0)
+
+p_error <- plot_surface(errors_vs_true, "Error (fit - true)") +
+  scale_fill_gradient2(low = "blue", mid = "white", high = "red", midpoint = 0)
+
+p_resid | p_error
+```
+**Interpretation:**
+
+- **Residuals (left)**: Shows (observed - fit), i.e., the noise that was "removed" by the isotonic fit. This should look like random noise with no obvious structure.
+- **Error (right)**: Shows (fit - true), i.e., how the fitted surface differs from the ground truth. Blue means the fit underestimates, red means it overestimates. The RMSE quantifies overall fit quality.
+
+# Effect of Noise Level
+
+How does the isotonic fit behave as noise increases?
+
+```{r noise-level-experiment, fig.height=8}
+noise_levels <- c(0.01, 0.05, 0.1, 0.2, 0.4)
+results <- list()
+
+set.seed(123)
+for (sigma in noise_levels) {
+  Z_noisy <- Z_true + rnorm(I*J, 0, sigma)
+  Z_noisy_mat <- matrix(Z_noisy, I, J)
+
+  fit_noisy <- isotonic_2d_fit(Z_noisy_mat, w, direction = "decreasing",
+                               osqp_pars = list(eps_abs = 1e-8, eps_rel = 1e-8))
+
+  rmse_vs_true <- sqrt(mean((fit_noisy$theta - Z_true)^2))
+  rmse_obs_vs_true <- sqrt(mean((Z_noisy_mat - Z_true)^2))
+
+  results[[as.character(sigma)]] <- list(
+    sigma = sigma,
+    theta = fit_noisy$theta,
+    Z_obs = Z_noisy_mat,
+    rmse_fit = rmse_vs_true,
+    rmse_obs = rmse_obs_vs_true
+  )
+}
+
+# Summary table
+summary_df <- data.table(
+  noise_sigma = noise_levels,
+  RMSE_observed = sapply(results, function(x) x$rmse_obs),
+  RMSE_isotonic = sapply(results, function(x) x$rmse_fit),
+  improvement = sapply(results, function(x) (x$rmse_obs - x$rmse_fit) / x$rmse_obs * 100)
+)
+knitr::kable(summary_df, digits = 3,
+             caption = "RMSE comparison: observed data vs isotonic fit")
+```
+
+**Interpretation:** The table quantifies error reduction. Next, we visually compare noisy surfaces and their isotonic fits at different noise levels.
+
+```{r noise-level-plots, fig.height=6}
+# Compute color limits across ALL noise levels to avoid gray (out-of-range) cells
+all_values <- c(as.numeric(Z_true))
+for (r in results) {
+  all_values <- c(all_values, as.numeric(r$Z_obs), as.numeric(r$theta))
+}
+zlim_all <- range(all_values, na.rm = TRUE)
+
+# Visual comparison for selected noise levels
+plot_list <- list()
+for (sigma in c(0.05, 0.2, 0.4)) {
+  r <- results[[as.character(sigma)]]
+
+  dt_obs <- data.table(
+    i = rep(1:I, times = J), j = rep(1:J, each = I),
+    value = as.numeric(r$Z_obs)
+  )
+  dt_fit <- data.table(
+    i = rep(1:I, times = J), j = rep(1:J, each = I),
+    value = as.numeric(r$theta)
+  )
+
+  p_obs <- ggplot(dt_obs, aes(x = j, y = i, fill = value)) +
+    geom_raster() + scale_y_reverse() +
+    scale_fill_viridis_c(option = "plasma", limits = zlim_all) +
+    labs(title = paste0("Observed (σ=", sigma, ")"), x = "j", y = "i") +
+    theme_minimal(base_size = 9) + theme(panel.grid = element_blank(), legend.position = "none")
+
+  p_fit <- ggplot(dt_fit, aes(x = j, y = i, fill = value)) +
+    geom_raster() + scale_y_reverse() +
+    scale_fill_viridis_c(option = "plasma", limits = zlim_all) +
+    labs(title = paste0("Isotonic fit (RMSE=", round(r$rmse_fit, 3), ")"), x = "j", y = "i") +
+    theme_minimal(base_size = 9) + theme(panel.grid = element_blank(), legend.position = "none")
+
+  plot_list[[paste0(sigma, "_obs")]] <- p_obs
+  plot_list[[paste0(sigma, "_fit")]] <- p_fit
+}
+
+(plot_list[["0.05_obs"]] | plot_list[["0.05_fit"]]) /
+(plot_list[["0.2_obs"]] | plot_list[["0.2_fit"]]) /
+(plot_list[["0.4_obs"]] | plot_list[["0.4_fit"]])
+```
+
+**Interpretation:**
+
+- At low noise (σ=0.05), both observed and fitted surfaces look similar to the truth. The isotonic fit provides modest improvement.
+- At medium noise (σ=0.2), the observations are visibly noisy, but the isotonic fit recovers a clean monotone surface.
+- At high noise (σ=0.4), the observations are severely corrupted. The isotonic fit still enforces monotonicity, but starts to deviate more from the truth.
+
+The improvement percentage shows that isotonic regression provides greater benefit as noise increases — this is the value of the shape constraint as regularization.
+
+# Edge Cases and Diagnostics
+
+## What happens with very small grids?
+
+```{r small-grid}
+# 2x2 grid (minimal case)
+Z_small <- matrix(c(1, 0.8, 0.7, 0.5), nrow = 2, ncol = 2)
+w_small <- matrix(1, 2, 2)
+
+fit_small <- isotonic_2d_fit(Z_small, w_small, direction = "decreasing")
+cat("2x2 grid:\n")
+cat("Input:\n")
+print(Z_small)
+cat("Output:\n")
+print(fit_small$theta)
+cat("Status:", fit_small$status, "\n")
+cat("Is monotone:", check_monotone_2d(fit_small$theta, "decreasing"), "\n")
+```
+
+## What happens when data already satisfies monotonicity?
+
+```{r already-monotone}
+# Data that is already monotone
+Z_already_mono <- Z_true  # No noise added
+
+fit_mono <- isotonic_2d_fit(Z_already_mono, w, direction = "decreasing",
+                            osqp_pars = list(eps_abs = 1e-10, eps_rel = 1e-10))
+
+max_diff <- max(abs(fit_mono$theta - Z_already_mono))
+cat("Max difference when input is already monotone:", format(max_diff, scientific = TRUE), "\n")
+cat("Fit essentially recovers input:", max_diff < 1e-6, "\n")
+```
+
+**Interpretation:** When the input data is already monotone, the isotonic fit essentially returns the input unchanged (within numerical precision). This is the correct behavior — the fit is the weighted least squares solution subject to constraints, and if the data already satisfies the constraints, it is its own solution.
+
+## What happens with missing data?
+
+We handle missing data by setting weights to zero for missing cells.
+
+```{r missing-data}
+# Introduce missing data (set some weights to 0)
+w_missing <- w
+missing_idx <- c(10, 25, 40)  # Some random cells
+w_missing[missing_idx] <- 0
+
+Z_with_missing <- Z_obs_mat
+Z_with_missing[missing_idx] <- NA  # Mark as missing (won't affect fit due to w=0)
+
+fit_missing <- isotonic_2d_fit(Z_obs_mat, w_missing, direction = "decreasing",
+                               osqp_pars = list(eps_abs = 1e-8, eps_rel = 1e-8))
+
+cat("Fit with", sum(w_missing == 0), "missing cells\n")
+cat("Status:", fit_missing$status, "\n")
+cat("Is monotone:", check_monotone_2d(fit_missing$theta, "decreasing"), "\n")
+
+# Compare to fit without missing
+diff_from_full <- sqrt(mean((fit_missing$theta - theta)^2))
+cat("RMSE difference from full-data fit:", round(diff_from_full, 4), "\n")
+```
+
+**Interpretation:** The fit still produces a valid monotone surface even with missing data. The missing cells are "interpolated" by the monotonicity constraint from their neighbors.
+
+# Using the Pipeline Function
+
+Let's verify our understanding by using the full pipeline on simulated data.
+
+```{r pipeline-integration}
+# Create config
+cfg <- list(
+  transform = list(name = "logit", eps = 1e-6),
+  responses = list(mode = "viability", clamp_01 = TRUE),
+  weights = list(tau = 1e-6, winsor_q = 0.99),
+  method = list(monotone_direction = "auto",
+                osqp = list(eps_abs = 1e-6, eps_rel = 1e-6, max_iter = 20000)),
+  bootstrap = list(B = 10, seed = 1),
+  project = list(n_cores = 1)
+)
+transform <- make_transform(cfg$transform)
+
+# Generate a matrix with interaction
+df_sim <- simulate_one_matrix(
+  experiment_id = "test",
+  I = 8, J = 8,
+  interaction_strength = 0.3,
+  noise_sigma = 0.05,
+  heavy_tail_df = 4,
+  missing_rate = 0,
+  outlier_rate = 0,
+  transform = transform,
+  response_mode = "viability"
+)
+
+# Summarize to matrix form
+ms <- summarise_matrix(
+  df_long = df_sim,
+  transform = transform,
+  response_mode = "viability",
+  method_direction = "auto",
+  tau = 1e-6,
+  winsor_q = 0.99
+)
+
+cat("Direction inferred:", ms$direction, "\n")
+cat("barZ range:", round(range(ms$barZ, na.rm = TRUE), 3), "\n")
+cat("Weight range:", round(range(ms$w), 3), "\n")
+
+# Fit isotonic
+fit_pipeline <- isotonic_2d_fit(ms$barZ, ms$w, direction = ms$direction,
+                                osqp_pars = cfg$method$osqp)
+
+cat("Fit status:", fit_pipeline$status, "\n")
+cat("Monotone:", check_monotone_2d(fit_pipeline$theta, ms$direction), "\n")
+```
+
+**Interpretation:** With the pipeline fit computed, we can visualize the transformed data against the isotonic surface.
+
+```{r pipeline-visualization, fig.height=4}
+p_barZ <- plot_surface(ms$barZ, "Transformed Data (barZ)")
+p_theta <- plot_surface(fit_pipeline$theta, "Isotonic Fit (theta_iso)")
+
+p_barZ | p_theta
+```
+
+**Interpretation:** The pipeline correctly transforms the viability data, computes weights, and fits a monotone surface. The isotonic fit smooths out the noise while preserving the overall dose-response structure.
+
+# Summary and Next Steps
+
+## What We Learned
+
+1. **1D isotonic regression** uses PAVA algorithm — O(n) time, closed-form solution
+2. The isotonic fit is a **step function** that pools adjacent violators
+3. **2D monotonicity** requires non-increasing values in both row and column directions
+4. The 2D fitting problem is a **quadratic program** solved efficiently by OSQP
+5. The constraint matrix encodes pairwise difference constraints between adjacent cells
+6. Monotonicity acts as **regularization**, improving RMSE vs true signal especially at higher noise
+7. The fit handles edge cases gracefully: small grids, already-monotone data, missing values
+
+## Key Properties Verified
+
+- 1D `isoreg_monotone()` correctly wraps R's PAVA implementation
+- 1D isotonic fit produces step functions that respect monotonicity
+- 2D OSQP successfully enforces monotonicity (violations at numerical precision)
+- Already-monotone data returns itself (projection onto constraint set)
+- Missing data (zero weights) are interpolated by the constraint
+- Higher noise → greater benefit from shape constraint
+
+## Correctness Check
+
+Both `isoreg_monotone()` (1D) and `isotonic_2d_fit()` (2D) appear to be implemented correctly:
+
+- QP formulation matches the mathematical specification
+- Constraints are properly encoded
+- OSQP solver converges reliably
+- Output satisfies monotonicity
+
+## Next Steps
+
+The isotonic fit gives us $\theta_{\text{iso}}$ — the best monotone surface. But to test for interaction, we need to compare this to the **additive null model**. In the next report, we will:
+
+1. Fit the monotone-additive decomposition: $\theta_{\text{add}} = \alpha + u_i + v_j$
+2. Understand the identifiability constraints
+3. Extract and interpret the $u$ and $v$ components
+4. Compare $\theta_{\text{iso}}$ and $\theta_{\text{add}}$ to measure interaction
+
+See: `03-additive-decomposition.Rmd`
+
+# Session Info
+
+```{r session-info}
+sessionInfo()
+```
+
+**Interpretation:** Session details above document the computational environment for reproducibility.

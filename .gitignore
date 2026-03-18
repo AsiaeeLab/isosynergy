@@ -1,0 +1,60 @@
+# R session
+.Rhistory
+.RData
+.Rproj.user
+
+# renv (keep activate.R, settings.json, .gitignore; exclude installed packages)
+renv/library/
+renv/staging/
+
+# Generated outputs (reproduced by scripts)
+cache/
+results/
+figures/
+
+# But keep doc/figures (paper figures needed for compilation)
+!doc/figures/
+
+# Raw data (too large; see README for download instructions)
+data/raw/drugcombdb/drugcombs_response.csv
+data/raw/drugcombdb/drugcombs_scored.csv
+data/raw/nci_almanac/ComboDrugGrowth_Nov2017.csv
+data/processed/
+
+# Backup and internal files
+_backup/
+.claude/
+FINAL_AUDIT_PROMPT.md
+doc/CODER_PROMPT.md
+
+# LaTeX build artifacts
+doc/*.aux
+doc/*.bbl
+doc/*.blg
+doc/*.fdb_latexmk
+doc/*.fls
+doc/*.log
+doc/*.out
+doc/*.pdf
+doc/*.synctex.gz
+
+# Template files not needed for reproduction
+Springer_Nature_LaTeX_Template__1_.zip
+doc/user-manual.pdf
+doc/sn-article.tex
+doc/sn-bibliography.bib
+doc/empty.eps
+doc/fig.eps
+doc/sn-apacite.bst
+doc/sn-aps.bst
+doc/sn-basic.bst
+doc/sn-chicago.bst
+doc/sn-mathphys-ay.bst
+doc/sn-mathphys-num.bst
+doc/sn-vancouver-ay.bst
+doc/sn-vancouver-num.bst
+
+# knitr artifacts
+experiments/*_cache/
+experiments/*_files/
+experiments/*.html

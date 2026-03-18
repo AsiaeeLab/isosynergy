@@ -1,0 +1,604 @@
+---
+title: "08 — Transform Sensitivity Analysis"
+author: "Amir Asiaee"
+date: '`r format(Sys.Date(), "%B %d, %Y")`'
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 3
+    number_sections: true
+    theme: yeti
+    highlight: kate
+    code_folding: show
+params:
+  seed: 42
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  warning = FALSE,
+  message = FALSE,
+  fig.width = 10,
+  fig.height = 6
+)
+
+knitr::opts_knit$set(root.dir = normalizePath(".."))
+```
+
+# Introduction
+
+Drug combination data can be analyzed on different scales:
+
+- **Identity**: Raw viability values (0 to 1)
+- **Logit**: $\text{logit}(y) = \log(y / (1-y))$ — maps (0,1) to (-∞, +∞)
+- **Asinh**: $\text{asinh}(y) = \log(y + \sqrt{y^2 + 1})$ — similar to log but handles zeros
+- **Log**: $\log(y)$ — for strictly positive data
+
+The choice of transform affects:
+
+1. How "additivity" is defined
+2. The distribution of residuals
+3. The detection of synergy/antagonism
+
+In this report, we explore how different transforms affect our shape-constrained analysis.
+
+# Setup
+
+```{r load-packages}
+library(data.table)
+library(ggplot2)
+library(patchwork)
+
+source("R/pipeline.R")
+source("R/transforms.R")
+
+set.seed(params$seed)
+cat("Using seed:", params$seed, "\n")
+```
+
+**Interpretation:** The transform utilities are loaded and the random seed is fixed for reproducibility.
+
+# Analysis Options
+
+We define the interaction summary and synergy direction once so all transform comparisons are on the same footing.
+
+```{r analysis-options}
+response_mode <- "viability"
+direction <- "decreasing"
+synergy_sign <- infer_synergy_sign(response_mode, direction)
+threshold <- 0.0
+stat_choice <- "S2"
+
+boot_residual_scale <- "df"
+# Rule-of-thumb df under a monotone-additive null; see experiments/00-bootstrap-df-scaling.md
+boot_df_null <- NULL
+
+cat("Statistic:", stat_choice, "\n")
+cat("Synergy sign:", synergy_sign, "\n")
+cat("Bootstrap residual_scale:", boot_residual_scale, "\n")
+```
+
+**Interpretation:** We use interaction energy (`S2`) as the default global interaction summary and keep it fixed across transforms. Because transforms change the geometry/scale of \(Z\), the *numeric magnitude* of `S2` can shift; the bootstrap p-value is still meaningful *within each transform* because it uses that transform’s fitted null. Note that `S2` is **two-sided** (interaction magnitude); direction is carried by the sign of \(\delta\) and summarized by the synergy index \(I_{\text{syn}}\). For calibration, we use df-rescaled residuals (`residual_scale = "df"`). If you want a scale-normalized alternative for cross-transform comparability, you can switch `stat_choice` to `S2_norm`.
+
+# Understanding Transforms
+
+## Available Transforms
+
+```{r transform-definitions}
+# Create transform objects
+transform_identity <- make_transform(list(name = "identity"))
+transform_logit <- make_transform(list(name = "logit", eps = 1e-4))
+transform_asinh <- make_transform(list(name = "asinh", asinh_scale = 1))
+transform_log <- make_transform(list(name = "log", eps = 1e-6))
+
+transforms <- list(
+  identity = transform_identity,
+  logit = transform_logit,
+  asinh = transform_asinh,
+  log = transform_log
+)
+
+cat("Available transforms:\n")
+for (name in names(transforms)) {
+  cat("  -", name, "\n")
+}
+```
+
+## Visualizing Transform Functions
+
+```{r transform-curves, fig.height=5}
+y_seq <- seq(0.01, 0.99, length.out = 100)
+
+transform_df <- data.frame(
+  y = rep(y_seq, 4),
+  z = c(
+    transform_identity$forward(y_seq),
+    transform_logit$forward(y_seq),
+    transform_asinh$forward(y_seq),
+    transform_log$forward(y_seq)
+  ),
+  transform = rep(c("Identity", "Logit", "Asinh", "Log"), each = length(y_seq))
+)
+
+ggplot(transform_df, aes(x = y, y = z, color = transform)) +
+  geom_line(linewidth = 1) +
+  labs(x = "Original value (y)", y = "Transformed value (z)",
+       title = "Transform Functions",
+       subtitle = "How each transform maps viability values") +
+  theme_minimal(base_size = 11) +
+  scale_color_brewer(palette = "Set1")
+```
+
+**Key differences:**
+
+- **Identity**: Linear, preserves original scale
+- **Logit**: Expands tails, symmetric around y=0.5
+- **Asinh**: Similar to log but stable near zero
+- **Log**: Expands low values, compresses high values
+
+## Why Transforms Matter for Synergy
+
+The null hypothesis "no interaction" means different things under different transforms:
+
+- **Identity**: $\theta_{ij} = \alpha + u_i + v_j$ (additive in viability)
+- **Logit**: Additive in log-odds → multiplicative in odds
+- **Log**: Additive in log → multiplicative in viability (Bliss-like)
+
+```{r transform-interpretation}
+cat("Interpretation of additivity:\n\n")
+cat("Identity: V_combo = V_A + V_B - 1 (roughly)\n")
+cat("  - Effects add linearly\n\n")
+cat("Logit: logit(V_combo) = logit(V_A) + logit(V_B) - const\n")
+cat("  - Odds multiply\n\n")
+cat("Log: log(V_combo) = log(V_A) + log(V_B) + const\n")
+cat("  - Viabilities multiply (Bliss independence)\n")
+```
+
+# Generate Test Data
+
+## Creating Combination Data
+
+```{r generate-data}
+I <- 8
+J <- 8
+
+boot_df_null <- I + J - 3
+
+# Generate a model-consistent true surface in Z-space (logit by default)
+surfaces <- simulate_true_surfaces(
+  I = I, J = J,
+  interaction_strength = 0.2,
+  response_mode = "viability",
+  interaction_mode = "projected",
+  interaction_sign = "auto"
+)
+
+Z_true <- surfaces$theta_iso_true
+
+# Add noise in Z-scale, then map to viability
+noise_sigma <- 0.05
+Z_obs <- as.numeric(Z_true) + rnorm(I * J, 0, noise_sigma)
+
+trans_logit <- make_transform(list(name = "logit", eps = 1e-6))
+V_obs <- matrix(trans_logit$inverse(Z_obs), I, J)
+V_obs <- matrix(clamp01(as.numeric(V_obs), eps = 0.02), I, J)
+
+cat("Generated data:\n")
+cat("  Range:", round(range(V_obs), 3), "\n")
+cat("  Mean:", round(mean(V_obs), 3), "\n")
+```
+
+## Visualize Original Data
+
+```{r viz-original, fig.height=4}
+df_orig <- expand.grid(i = 1:I, j = 1:J)
+df_orig$V <- as.numeric(V_obs)
+
+ggplot(df_orig, aes(x = factor(j), y = factor(i), fill = V)) +
+  geom_tile() +
+  scale_fill_gradient2(low = "darkred", mid = "white", high = "darkblue",
+                       midpoint = 0.5, limits = c(0, 1)) +
+  labs(x = "Drug B index", y = "Drug A index", fill = "Viability",
+       title = "Observed Viability Matrix") +
+  theme_minimal(base_size = 11) +
+  coord_equal()
+```
+
+# Applying Different Transforms
+
+## Transform and Analyze
+
+```{r apply-transforms}
+results <- list()
+w <- matrix(1, I, J)
+
+for (trans_name in c("identity", "logit", "asinh")) {
+  trans <- transforms[[trans_name]]
+
+  # Transform data
+  Z_trans <- matrix(trans$forward(as.numeric(V_obs)), I, J)
+
+  # Fit models
+  fit_iso <- isotonic_2d_fit(Z_trans, w, direction = direction,
+                              osqp_pars = list(eps_abs = 1e-8, eps_rel = 1e-8))
+  fit_add <- additive_ordered_fit(Z_trans, w, direction = direction,
+                                   osqp_pars = list(eps_abs = 1e-8, eps_rel = 1e-8))
+
+  # Interaction surface in transformed space
+  delta_trans <- fit_iso$theta - fit_add$theta
+  stat_value <- interaction_stat(stat_choice, delta_trans, w,
+                                 sum(w * (Z_trans - fit_add$theta)^2),
+                                 sum(w * (Z_trans - fit_iso$theta)^2),
+                                 synergy_sign = synergy_sign, threshold = threshold)
+  summ_trans <- interaction_summaries(delta_trans, w, synergy_sign = synergy_sign, threshold = threshold)
+
+  # Bootstrap for p-value
+  boot_result <- wild_bootstrap(Z_trans, w, direction = direction, B = 100,
+                                seed = params$seed,
+                                osqp_pars = list(eps_abs = 1e-8, eps_rel = 1e-8),
+                                n_cores = 1, use_parallel = FALSE,
+                                stat = stat_choice,
+                                synergy_sign = synergy_sign,
+                                threshold = threshold,
+                                residual_scale = boot_residual_scale,
+                                df_null = boot_df_null)
+
+  results[[trans_name]] <- list(
+    transform = trans_name,
+    Z_trans = Z_trans,
+    theta_iso = fit_iso$theta,
+    theta_add = fit_add$theta,
+    delta = delta_trans,
+    synergy_index = summ_trans$synergy_index,
+    stat_value = stat_value,
+    p_value = boot_result$p_value,
+    boot_result = boot_result
+  )
+
+  cat(trans_name,
+      ": stat =", round(stat_value, 4),
+      ", p =", round(boot_result$p_value, 4),
+      ", synergy_index =", round(summ_trans$synergy_index, 3), "\n")
+}
+```
+
+**Interpretation:** We now have transform‑specific fits, statistics, and p‑values. The next table summarizes these side by side.
+
+## Compare Results
+
+```{r compare-results}
+summary_df <- data.frame(
+  Transform = names(results),
+  stat_value = sapply(results, function(r) r$stat_value),
+  p_value = sapply(results, function(r) r$p_value),
+  synergy_index = sapply(results, function(r) r$synergy_index),
+  max_delta = sapply(results, function(r) max(abs(r$delta))),
+  mean_delta = sapply(results, function(r) mean(r$delta))
+)
+
+knitr::kable(summary_df, digits = 4,
+             caption = paste0("Comparison Across Transforms (stat = ", stat_choice, ")"))
+```
+
+# Visualizing Transform Effects
+
+## Transformed Data
+
+```{r transformed-data-viz, fig.height=4}
+plots_trans <- list()
+
+for (trans_name in names(results)) {
+  df <- expand.grid(i = 1:I, j = 1:J)
+  df$value <- as.numeric(results[[trans_name]]$Z_trans)
+
+  plots_trans[[trans_name]] <- ggplot(df, aes(x = factor(j), y = factor(i), fill = value)) +
+    geom_tile() +
+    scale_fill_viridis_c() +
+    labs(title = paste0(trans_name, " transformed"),
+         x = "", y = "", fill = "z") +
+    theme_minimal(base_size = 9) +
+    coord_equal() +
+    theme(legend.position = "bottom")
+}
+
+wrap_plots(plots_trans, ncol = 3)
+```
+
+## Interaction Surfaces
+
+```{r interaction-surfaces, fig.height=4}
+plots_delta <- list()
+
+for (trans_name in names(results)) {
+  df <- expand.grid(i = 1:I, j = 1:J)
+  df$delta <- as.numeric(results[[trans_name]]$delta)
+  max_d <- max(abs(df$delta))
+
+  plots_delta[[trans_name]] <- ggplot(df, aes(x = factor(j), y = factor(i), fill = delta)) +
+    geom_tile() +
+    scale_fill_gradient2(low = "blue", mid = "white", high = "red",
+                         midpoint = 0, limits = c(-max_d, max_d)) +
+    labs(title = paste0(trans_name, ": δ = θ_iso - θ_add"),
+         x = "", y = "", fill = "δ") +
+    theme_minimal(base_size = 9) +
+    coord_equal() +
+    theme(legend.position = "bottom")
+}
+
+wrap_plots(plots_delta, ncol = 3)
+```
+
+**Observation:** The interaction pattern is detected across all transforms, but the magnitude and shape may differ slightly.
+
+## Residual Distributions
+
+```{r residual-distributions, fig.height=5}
+residual_df <- data.frame()
+
+for (trans_name in names(results)) {
+  Z <- results[[trans_name]]$Z_trans
+  theta_iso <- results[[trans_name]]$theta_iso
+  residuals <- as.numeric(Z - theta_iso)
+
+  residual_df <- rbind(residual_df, data.frame(
+    transform = trans_name,
+    residual = residuals
+  ))
+}
+
+ggplot(residual_df, aes(x = residual)) +
+  geom_histogram(bins = 20, fill = "steelblue", alpha = 0.7) +
+  facet_wrap(~ transform, scales = "free", ncol = 3) +
+  labs(x = "Residual (Z - θ_iso)", y = "Count",
+       title = "Residual Distributions by Transform") +
+  theme_minimal(base_size = 10)
+```
+
+**Interpretation:** The residual histograms summarize distributional shape. Next we check normality more directly with Q–Q plots.
+
+```{r residual-qq, fig.height=5}
+ggplot(residual_df, aes(sample = residual)) +
+  stat_qq() +
+  stat_qq_line(color = "red") +
+  facet_wrap(~ transform, scales = "free", ncol = 3) +
+  labs(title = "Q-Q Plots: Are Residuals Normal?",
+       subtitle = "Points should follow red line if normal") +
+  theme_minimal(base_size = 10)
+```
+
+**Interpretation:** Different transforms may produce different residual distributions. The logit transform often produces more symmetric residuals for viability data bounded in (0,1).
+
+# Sensitivity to Transform Choice
+
+## How Much Do Results Differ?
+
+```{r transform-sensitivity}
+# Compare pairwise correlation of delta surfaces
+delta_matrices <- lapply(results, function(r) as.numeric(r$delta))
+delta_cor <- cor(do.call(cbind, delta_matrices))
+colnames(delta_cor) <- rownames(delta_cor) <- names(results)
+
+cat("Correlation of interaction surfaces across transforms:\n")
+print(round(delta_cor, 3))
+```
+
+**Interpretation:** The correlation matrix summarizes how similar the detected interaction surfaces are across transforms. Next we compare the resulting p-values.
+
+```{r pvalue-comparison, fig.height=4}
+# Plot p-values
+pval_df <- data.frame(
+  transform = names(results),
+  p_value = sapply(results, function(r) r$p_value)
+)
+
+ggplot(pval_df, aes(x = transform, y = p_value, fill = transform)) +
+  geom_col(alpha = 0.7) +
+  geom_hline(yintercept = 0.05, linetype = "dashed", color = "red") +
+  annotate("text", x = 0.5, y = 0.055, label = "α = 0.05", color = "red", hjust = 0) +
+  labs(x = "Transform", y = "P-value",
+       title = "P-values Across Different Transforms") +
+  theme_minimal(base_size = 11) +
+  theme(legend.position = "none")
+```
+
+## When Do Transforms Disagree?
+
+```{r disagreement-analysis}
+# Generate multiple datasets and check agreement
+n_datasets <- 20
+agreement_results <- data.frame()
+
+set.seed(params$seed)
+
+for (d in 1:n_datasets) {
+  # Generate model-consistent data in logit space
+  delta_strength <- runif(1, 0, 0.3)
+  surfaces_d <- simulate_true_surfaces(
+    I = I, J = J,
+    interaction_strength = delta_strength,
+    response_mode = response_mode,
+    interaction_mode = "projected",
+    interaction_sign = "auto"
+  )
+
+  Z_true_d <- surfaces_d$theta_iso_true
+  Z_obs_d <- as.numeric(Z_true_d) + rnorm(I * J, 0, noise_sigma)
+  V_obs_d <- matrix(transforms$logit$inverse(Z_obs_d), I, J)
+  V_obs_d <- matrix(clamp01(as.numeric(V_obs_d), eps = 0.02), I, J)
+
+  pvals <- c()
+  for (trans_name in c("identity", "logit", "asinh")) {
+    trans <- transforms[[trans_name]]
+    Z_d <- matrix(trans$forward(as.numeric(V_obs_d)), I, J)
+
+    boot_d <- wild_bootstrap(Z_d, w, direction = direction, B = 50,
+                             seed = params$seed + d,
+                             osqp_pars = list(eps_abs = 1e-8, eps_rel = 1e-8),
+                             n_cores = 1, use_parallel = FALSE,
+                             stat = stat_choice,
+                             synergy_sign = synergy_sign,
+                             threshold = threshold,
+                             residual_scale = boot_residual_scale,
+                             df_null = boot_df_null)
+    pvals[trans_name] <- boot_d$p_value
+  }
+
+  # Check agreement at α = 0.05
+  reject <- pvals < 0.05
+  all_agree <- all(reject) | all(!reject)
+
+  agreement_results <- rbind(agreement_results, data.frame(
+    dataset = d,
+    delta_strength = delta_strength,
+    p_identity = pvals["identity"],
+    p_logit = pvals["logit"],
+    p_asinh = pvals["asinh"],
+    all_agree = all_agree
+  ))
+}
+```
+
+**Interpretation:** We now have p-values across transforms for multiple datasets. Next we summarize overall agreement.
+
+```{r agreement-summary}
+cat("Transform Agreement Analysis:\n")
+cat("  Number of datasets:", n_datasets, "\n")
+cat("  All transforms agree:", sum(agreement_results$all_agree), "/", n_datasets,
+    "(", round(mean(agreement_results$all_agree) * 100, 1), "%)\n")
+```
+
+**Interpretation:** The agreement rate quantifies how often transform choice changes the accept/reject decision. The scatter plot below shows the pattern across effect sizes.
+
+```{r agreement-plot, fig.height=5}
+agreement_long <- melt(
+  as.data.table(agreement_results),
+  id.vars = c("dataset", "delta_strength", "all_agree"),
+  measure.vars = c("p_identity", "p_logit", "p_asinh"),
+  variable.name = "transform",
+  value.name = "p_value"
+)
+agreement_long$transform <- gsub("p_", "", agreement_long$transform)
+
+ggplot(agreement_long, aes(x = delta_strength, y = p_value, color = transform)) +
+  geom_point(alpha = 0.6) +
+  geom_hline(yintercept = 0.05, linetype = "dashed", color = "gray40") +
+  geom_smooth(method = "loess", se = FALSE, linewidth = 0.8) +
+  labs(x = "True interaction strength", y = "P-value",
+       title = "P-values vs True Interaction Strength",
+       subtitle = "Different transforms; dashed line = α = 0.05") +
+  theme_minimal(base_size = 11) +
+  scale_color_brewer(palette = "Set1")
+```
+
+# Transform Selection Guidelines
+
+## When to Use Each Transform
+
+```{r transform-guidelines}
+guidelines_df <- data.frame(
+  Transform = c("Identity", "Logit", "Asinh", "Log"),
+  `Best For` = c(
+    "Viability data in [0,1]",
+    "Bounded data, symmetric null",
+    "Data with values near 0",
+    "Strictly positive ratios"
+  ),
+  Pros = c(
+    "Simple, interpretable",
+    "Handles boundaries, symmetric residuals",
+    "Stable at zero, smooth",
+    "Multiplicative null (Bliss-like)"
+  ),
+  Cons = c(
+    "Boundary effects",
+    "Sensitive near 0 and 1",
+    "Less common in literature",
+    "Can't handle zeros"
+  )
+)
+
+knitr::kable(guidelines_df, caption = "Transform Selection Guidelines")
+```
+
+## Recommendation
+
+Based on typical drug combination data:
+
+1. **Default choice**: **Logit** for viability data in (0,1)
+   - Handles bounded nature of data
+   - Symmetric treatment of low and high viability
+   - Well-established in biostatistics
+
+2. **When data has zeros**: **Asinh** or **Identity**
+   - Asinh is stable at zero
+   - Identity avoids transformation issues
+
+3. **For multiplicative models**: **Log** transform
+   - Aligns with Bliss independence assumptions
+   - But requires strictly positive data
+
+# Impact on Conclusions
+
+## Summary Comparison
+
+```{r final-comparison}
+cat("Summary of transform effects on our test data:\n\n")
+
+for (trans_name in names(results)) {
+  r <- results[[trans_name]]
+  conclusion <- if (r$p_value < 0.05) "REJECT null (interaction detected)" else "FAIL TO REJECT null"
+  cat(sprintf("%-10s: %s = %6.3f, p = %.3f → %s\n",
+              trans_name, stat_choice, r$stat_value, r$p_value, conclusion))
+}
+```
+
+## Key Findings
+
+1. **General agreement**: For moderate effect sizes, transforms usually agree on whether synergy is detected
+
+2. **Edge cases**: Disagreement is more likely when:
+   - Effect size is near the detection threshold
+   - Data has many values near boundaries (0 or 1)
+   - Sample size is small
+
+3. **Transform affects interpretation**: "Additivity" means different things under different transforms
+
+4. **Practical recommendation**: Report results for at least 2 transforms as sensitivity analysis
+
+# Summary
+
+## What We Learned
+
+1. **Different transforms define different null hypotheses**:
+   - Identity: additive in viability
+   - Logit: multiplicative in odds
+   - Log: multiplicative in viability (Bliss)
+
+2. **Our shape-constrained test works with any transform**: Just apply the transform before fitting
+
+3. **Results are usually robust** across transforms for clear synergy/antagonism
+
+4. **Borderline cases may differ**: Use sensitivity analysis when effect size is small
+
+## Recommendations
+
+- **Report multiple transforms** for transparency
+- **Default to logit** for standard viability data
+- **Check residual normality** to guide transform choice
+- **Document your choice** in publications
+
+## Next Steps
+
+We've analyzed synthetic data. Now let's apply our methods to **real public drug combination datasets**.
+
+See: `09-public-data.Rmd`
+
+# Session Info
+
+```{r session-info}
+sessionInfo()
+```
+
+**Interpretation:** Session details above document the computational environment for reproducibility.

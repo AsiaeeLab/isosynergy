@@ -1,0 +1,935 @@
+---
+title: "01 — Understanding the Simulation Model: How Dose-Response Matrices Are Generated"
+author: "Amir Asiaee"
+date: '`r format(Sys.Date(), "%B %d, %Y")`'
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 3
+    number_sections: true
+    theme: yeti
+    highlight: kate
+    code_folding: show
+params:
+  seed: 42
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+
+  echo = TRUE,
+  warning = FALSE,
+  message = FALSE,
+  fig.width = 10,
+  fig.height = 6
+)
+
+# Make paths behave the same in interactive runs and knitting.
+knitr::opts_knit$set(root.dir = normalizePath(".."))
+```
+
+# Introduction
+
+Before we can validate a statistical method, we need to understand the data it operates on. This report walks through the **data generation process** used in our simulation studies, building up from first principles.
+
+The goal is to answer: *How do we simulate dose-response matrices with known properties, so we can test whether our method recovers them correctly?*
+
+We will:
+
+1. Understand what a dose-response matrix looks like
+2. Build the **monotone-additive signal** (the "null" model)
+3. Add a controlled **interaction bump** (the "alternative")
+4. Add realistic **noise** (heavy-tailed, possibly with outliers)
+5. Verify that our simulated data has the expected structure
+
+
+By the end, we should have confidence that our simulation model is sensible and that we understand exactly what signal we're trying to detect.
+
+# Setup
+
+First, let's load the necessary packages and source the pipeline code.
+
+```{r load-packages}
+library(data.table)
+library(ggplot2)
+library(patchwork)
+
+# Source the pipeline (loads all core functions)
+source("R/pipeline.R")
+
+# Set seed for reproducibility
+set.seed(params$seed)
+cat("Using seed:", params$seed, "\n")
+```
+
+**Interpretation:** Packages and pipeline functions are loaded, and the RNG seed is fixed for reproducibility.
+
+# What is a Dose-Response Matrix?
+
+In drug combination studies, we test two drugs (A and B) at multiple dose levels. For each combination of doses, we measure a biological response (e.g., cell viability or inhibition).
+
+This creates a **matrix** where:
+- Rows correspond to doses of Drug A (typically increasing)
+- Columns correspond to doses of Drug B (typically increasing)
+- Each cell contains the measured response
+
+Let's define a simple dose grid to work with.
+
+```{r dose-grid}
+I <- 8  # Number of dose levels for Drug A
+J <- 8  # Number of dose levels for Drug B
+
+# Doses are typically on a log scale (e.g., 0.01 to 10 µM)
+dosesA <- 10^seq(-2, 1, length.out = I)
+dosesB <- 10^seq(-2, 1, length.out = J)
+
+cat("Drug A doses:", round(dosesA, 4), "\n")
+cat("Drug B doses:", round(dosesB, 4), "\n")
+```
+
+The dose levels span 3 orders of magnitude (0.01 to 10), which is typical for drug screening experiments.
+
+# The Monotone-Additive Signal
+
+## Biological Rationale
+
+If two drugs act **independently** (no interaction), we expect the combined effect to be determined solely by the individual drug effects. The simplest model for this is an **additive model** in the transformed scale:
+
+$$
+\theta_{ij}^{\text{add}} = \alpha + u_i + v_j
+$$
+
+where:
+- $\alpha$ is the baseline (intercept)
+- $u_i$ is the effect of Drug A at dose level $i$
+- $v_j$ is the effect of Drug B at dose level $j$
+
+Crucially, both $u$ and $v$ should be **monotone** in dose: as dose increases, the effect should increase (or stay the same) in a consistent direction. For viability data, this means *decreasing* response with increasing dose.
+
+## Generating Monotone Effects
+
+Let's generate monotone vectors $u$ and $v$ using cumulative sums of positive random increments.
+
+```{r monotone-effects}
+# Generate monotone decreasing effects
+# We use cumulative sums of absolute normal values (always positive increments)
+u_raw <- -cumsum(abs(rnorm(I, mean = 0.3, sd = 0.15)))
+v_raw <- -cumsum(abs(rnorm(J, mean = 0.3, sd = 0.15)))
+
+# Center to have mean zero (identifiability constraint)
+u <- u_raw - mean(u_raw)
+v <- v_raw - mean(v_raw)
+
+# Intercept
+alpha <- rnorm(1, mean = 0, sd = 0.2)
+
+cat("Intercept alpha:", round(alpha, 3), "\n")
+cat("Drug A effects u:", round(u, 3), "\n")
+cat("Drug B effects v:", round(v, 3), "\n")
+cat("sum(u) =", round(sum(u), 6), ", sum(v) =", round(sum(v), 6), "(should be ~0)\n")
+```
+
+Let's visualize these monotone effect vectors.
+
+```{r plot-marginal-effects, fig.height=4}
+p_u <- ggplot(data.frame(i = 1:I, u = u), aes(x = i, y = u)) +
+  geom_line(color = "steelblue", linewidth = 1) +
+  geom_point(color = "steelblue", size = 2) +
+  labs(x = "Dose index (Drug A)", y = "Effect u_i",
+       title = "Drug A marginal effect (monotone decreasing)") +
+  theme_minimal(base_size = 11)
+
+p_v <- ggplot(data.frame(j = 1:J, v = v), aes(x = j, y = v)) +
+  geom_line(color = "darkorange", linewidth = 1) +
+  geom_point(color = "darkorange", size = 2) +
+  labs(x = "Dose index (Drug B)", y = "Effect v_j",
+       title = "Drug B marginal effect (monotone decreasing)") +
+  theme_minimal(base_size = 11)
+
+p_u | p_v
+```
+
+**Interpretation:** Both effect vectors are strictly decreasing as dose index increases. This is biologically sensible: higher drug concentrations produce lower viability (in transformed scale).
+
+**The sum-to-zero constraint:** We center $u$ and $v$ to have mean zero (i.e., $\sum_i u_i = 0$ and $\sum_j v_j = 0$). This is an **identifiability constraint** — without it, the model has infinitely many equivalent solutions. For example, we could add 5 to every $u_i$ and subtract 5 from $\alpha$, getting the same $\theta_{ij}$. By fixing $\sum u_i = 0$ and $\sum v_j = 0$, we pin down a unique solution.
+
+## Building the Additive Surface
+
+Now we construct the full additive surface by combining the intercept and marginal effects.
+
+```{r additive-surface}
+# Create the additive surface: alpha + u_i + v_j
+Z_add <- matrix(alpha, nrow = I, ncol = J) +
+  matrix(u, nrow = I, ncol = J) +            # u repeated across columns
+  matrix(v, nrow = I, ncol = J, byrow = TRUE) # v repeated across rows
+
+cat("Additive surface dimensions:", dim(Z_add), "\n")
+cat("Range of Z_add:", round(range(Z_add), 3), "\n")
+```
+
+Let's visualize this additive surface as a heatmap.
+
+```{r plot-additive-surface, fig.height=5}
+dt_add <- data.table(
+  i = rep(1:I, times = J),
+  j = rep(1:J, each = I),
+  value = as.numeric(Z_add)
+)
+
+ggplot(dt_add, aes(x = j, y = i, fill = value)) +
+  geom_raster() +
+  scale_y_reverse() +
+  scale_fill_viridis_c(option = "plasma") +
+  labs(x = "Dose index (Drug B)", y = "Dose index (Drug A)",
+       title = "Additive Surface: Z_add = alpha + u_i + v_j",
+       subtitle = "This is what we expect under NO interaction (null hypothesis)",
+       fill = "Z") +
+  theme_minimal(base_size = 11) +
+  theme(panel.grid = element_blank())
+```
+
+**Interpretation:** The additive surface has a characteristic "corner" structure. Values decrease as we move right (higher Drug B dose) and down (higher Drug A dose). Importantly, the surface has no "twist" — the effect of increasing Drug A dose is the same regardless of Drug B dose, and vice versa. This is what "additivity" (no interaction) looks like.
+
+## Checking Monotonicity
+
+Let's verify that our additive surface is indeed monotone in both dimensions.
+
+```{r check-additive-monotonicity}
+# Check monotonicity along rows (Drug A, varying i for fixed j)
+row_diffs <- Z_add[-1, ] - Z_add[-I, ]
+all_row_decreasing <- all(row_diffs <= 1e-10)
+
+# Check monotonicity along columns (Drug B, varying j for fixed i)
+col_diffs <- Z_add[, -1] - Z_add[, -J]
+all_col_decreasing <- all(col_diffs <= 1e-10)
+
+cat("Row-wise monotone (Drug A):", all_row_decreasing, "\n")
+cat("Column-wise monotone (Drug B):", all_col_decreasing, "\n")
+cat("Surface is 2D monotone:", all_row_decreasing && all_col_decreasing, "\n")
+```
+
+**Interpretation:** The additive surface is monotone decreasing in both dimensions. This is guaranteed by construction since both $u$ and $v$ are monotone.
+
+# Adding an Interaction Bump
+
+## What is Drug-Drug Interaction?
+
+Drug-drug interaction means the combined effect differs from what we'd expect based on individual effects alone. **Synergy** means the combination is more effective than expected (lower viability than additive prediction), while **antagonism** means less effective.
+
+### Two projection operators: monotone and monotone-additive
+
+Our method compares two nested model classes on the **transformed** scale \(Z\):
+
+- **Monotone surfaces** (call this set \(\mathcal M\)): all \(I\times J\) grids \(\theta\) that are monotone in both dose dimensions (e.g., non-increasing in \(i\) and \(j\) for viability-type responses).
+- **Monotone-additive surfaces** (call this set \(\mathcal A\subset\mathcal M\)): all grids of the form
+  \[
+  \theta_{ij}=\alpha+u_i+v_j
+  \quad \text{with monotone } u \text{ and } v
+  \quad \text{(plus identifiability constraints, e.g. } \sum_i u_i=\sum_j v_j=0\text{).}
+  \]
+
+Both model classes are convex, and we use **weighted least-squares projections** onto them. Given a target surface \(Y\) and nonnegative weights \(w_{ij}\), define:
+\[
+\mathrm{Proj}_{\mathcal M}(Y)
+\;:=\;
+\arg\min_{\theta\in\mathcal M}
+\sum_{i,j} w_{ij}\,\bigl(Y_{ij}-\theta_{ij}\bigr)^2,
+\qquad
+\mathrm{Proj}_{\mathcal A}(Y)
+\;:=\;
+\arg\min_{\theta\in\mathcal A}
+\sum_{i,j} w_{ij}\,\bigl(Y_{ij}-\theta_{ij}\bigr)^2.
+\]
+
+Intuition:
+
+- \(\mathrm{Proj}_{\mathcal M}\) is “the closest monotone surface” to \(Y\).
+- \(\mathrm{Proj}_{\mathcal A}\) is “the closest monotone-additive surface” to \(Y\).
+
+These are the two projections we will keep using throughout the pipeline.
+
+### Model-consistent interaction definition
+
+We define interaction in the **same geometry we test**. Under the alternative:
+
+1. Choose a monotone (but non-additive) surface \(\theta^{\text{iso,true}}\).
+2. Define the interaction as the non-additive component:
+\[
+\Delta^{\text{true}} = \theta^{\text{iso,true}} - \mathrm{Proj}_{\mathcal{A}}(\theta^{\text{iso,true}}).
+\]
+
+This guarantees:
+
+- The total surface is monotone by construction (\(\theta^{\text{iso,true}}\in\mathcal M\)).
+- The interaction \(\Delta^{\text{true}}\) is exactly the residual *within the same additive-null geometry* our method uses.
+
+## A Candidate Interaction Shape (Gaussian bump)
+
+To create a **localized interaction signal**, we start with a Gaussian bump centered in the matrix interior. This is a *candidate* interaction shape:
+
+1. Interaction often concentrates at intermediate doses (too low = no effect, too high = saturated)
+2. The bump is smooth and localized
+3. We can control its strength precisely
+
+**Important caveat:** adding this bump directly to the additive surface can **break monotonicity**. So we treat this bump as a *candidate* interaction shape and then **project the total surface onto the monotone cone** (see next section) to ensure biological monotonicity holds exactly.
+
+```{r interaction-bump}
+# Interaction strength parameter
+interaction_strength <- 0.8  # Controls magnitude of interaction
+
+# Candidate bump (centered)
+bump <- make_bump_surface(I, J)
+
+# For viability, synergy = dip (negative delta in Z scale)
+Delta_raw <- -interaction_strength * bump
+Z_candidate <- Z_add + Delta_raw
+
+cat("Max |Delta_raw|:", round(max(abs(Delta_raw)), 3), "\n")
+```
+
+**Interpretation:** This gives us a localized deviation from additivity. But \(Z_{\text{candidate}}\) may not be monotone anymore, which is not biologically plausible. We fix this next.
+
+## Project to a monotone, model-consistent alternative
+
+This is where the two projections enter the data-generating model.
+
+1. **Monotone projection:** turn the potentially non-monotone candidate surface into a valid monotone surface:
+\[
+\theta^{\text{iso,true}} \;=\; \mathrm{Proj}_{\mathcal M}(Z_{\text{candidate}}).
+\]
+
+2. **Monotone-additive projection:** compute the closest monotone-additive approximation of that monotone truth:
+\[
+\theta^{\text{add,true}} \;=\; \mathrm{Proj}_{\mathcal A}\bigl(\theta^{\text{iso,true}}\bigr).
+\]
+
+3. **Interaction:** define the model-consistent interaction as the non-additive residual:
+
+\[
+\Delta^{\text{true}} \;=\; \theta^{\text{iso,true}} - \theta^{\text{add,true}}.
+\]
+
+### How are these projections computed?
+
+Both projections are solved as **convex quadratic programs (QPs)**:
+
+- \(\mathrm{Proj}_{\mathcal M}\) is 2D isotonic regression on a grid: we optimize over \(\theta_{ij}\) with monotonicity constraints between adjacent doses (e.g., \(\theta_{i+1,j}\le \theta_{ij}\) and \(\theta_{i,j+1}\le \theta_{ij}\) for “decreasing”).
+- \(\mathrm{Proj}_{\mathcal A}\) is a monotone-additive fit: we optimize over \((\alpha, u, v)\) with monotonicity constraints on \(u\) and \(v\) plus identifiability constraints (sum-to-zero).
+
+In code, `isotonic_2d_fit()` implements \(\mathrm{Proj}_{\mathcal M}\) and `additive_ordered_fit()` implements \(\mathrm{Proj}_{\mathcal A}\), both solved with OSQP. Here we use uniform weights \(w_{ij}=1\) for clarity; the pipeline supports general weights from replicates/variance.
+
+```{r model-consistent-interaction}
+# Enforce monotonicity by isotonic projection
+theta_iso_true <- isotonic_2d_fit(
+  Z_candidate, w = matrix(1, I, J),
+  direction = "decreasing",
+  osqp_pars = list(eps_abs = 1e-7, eps_rel = 1e-7, max_iter = 20000)
+)$theta
+
+# Additive projection defines the model-consistent interaction
+theta_add_true <- additive_ordered_fit(
+  theta_iso_true, w = matrix(1, I, J),
+  direction = "decreasing",
+  osqp_pars = list(eps_abs = 1e-7, eps_rel = 1e-7, max_iter = 20000)
+)$theta
+
+Delta_true <- theta_iso_true - theta_add_true
+
+# Check monotonicity
+cat("Monotone surface:", check_monotone_2d(theta_iso_true, direction = "decreasing"), "\n")
+```
+
+**Interpretation:** We now have a **monotone true surface** \(\theta^{\text{iso,true}}\). The interaction \(\Delta^{\text{true}}\) is defined *exactly* the way our method will infer it (isotonic minus monotone-additive).
+
+Let's visualize the interaction surface.
+
+```{r plot-interaction, fig.height=5}
+dt_delta <- data.table(
+  i = rep(1:I, times = J),
+  j = rep(1:J, each = I),
+  value = as.numeric(Delta_true)
+)
+
+ggplot(dt_delta, aes(x = j, y = i, fill = value)) +
+  geom_raster() +
+  scale_y_reverse() +
+  scale_fill_gradient2(low = "blue", mid = "white", high = "red", midpoint = 0) +
+  labs(x = "Dose index (Drug B)", y = "Dose index (Drug A)",
+       title = "Interaction Surface: Delta_true",
+       subtitle = "Negative values = synergy (dip) on the Z scale",
+       fill = expression(Delta)) +
+  theme_minimal(base_size = 11) +
+  theme(panel.grid = element_blank())
+```
+
+**Interpretation:** This is the **model-consistent interaction surface**. It shows where the monotone surface departs from monotone additivity.
+
+## The True Signal
+
+Now we combine the additive surface and the interaction to get the true underlying signal.
+
+```{r true-surface}
+Z_true <- theta_iso_true
+
+cat("theta_add_true range:", round(range(theta_add_true), 3), "\n")
+cat("theta_iso_true range:", round(range(theta_iso_true), 3), "\n")
+cat("Delta_true range:", round(range(Delta_true), 3), "\n")
+```
+
+Let's compare all three surfaces side by side.
+
+```{r compare-surfaces, fig.height=4}
+plot_surface_dt <- function(mat, title) {
+  dt <- data.table(
+    i = rep(1:nrow(mat), times = ncol(mat)),
+    j = rep(1:ncol(mat), each = nrow(mat)),
+    value = as.numeric(mat)
+  )
+  ggplot(dt, aes(x = j, y = i, fill = value)) +
+    geom_raster() +
+    scale_y_reverse() +
+    scale_fill_viridis_c(option = "plasma") +
+    labs(x = "Dose B", y = "Dose A", title = title, fill = "Z") +
+    theme_minimal(base_size = 10) +
+    theme(panel.grid = element_blank())
+}
+
+p1 <- plot_surface_dt(theta_add_true, "Additive projection (null geometry)")
+p2 <- plot_surface_dt(Z_true, "True monotone surface (alt)")
+p3 <- plot_surface_dt(Delta_true, "Interaction (Delta_true)") +
+  scale_fill_gradient2(low = "blue", mid = "white", high = "red", midpoint = 0)
+
+p1 | p2 | p3
+```
+
+**Interpretation:** The additive projection captures the main monotone trend, while the true monotone surface contains a localized deviation. The interaction surface \( \Delta^{\text{true}} \) isolates that deviation in the same geometry our method uses, which is what we want to detect against noise.
+
+# Adding Realistic Noise
+
+## The Noise Model
+
+Real experimental data is noisy. We model noise as:
+
+1. **Heavy-tailed**: Using a t-distribution instead of Gaussian (accounts for occasional large deviations)
+2. **Scaled**: To a specified noise level (noise_sigma)
+3. **Optional outliers**: Extreme values that occur rarely
+
+```{r noise-generation}
+noise_sigma <- 0.05
+heavy_tail_df <- 4  # degrees of freedom for t-distribution
+
+n_cells <- I * J
+
+# Generate t-distributed noise
+eps <- rt(n_cells, df = heavy_tail_df)
+# Standardize to have unit variance, then scale
+eps <- eps / sd(eps) * noise_sigma
+
+cat("Noise sigma:", noise_sigma, "\n")
+cat("Heavy tail df:", heavy_tail_df, "\n")
+cat("Actual noise sd:", round(sd(eps), 4), "\n")
+cat("Noise range:", round(range(eps), 3), "\n")
+```
+
+**Interpretation:** These summary numbers confirm the noise scale and heavy tails. Next, we visualize the distribution to see the tail behavior directly.
+
+```{r plot-noise-dist, fig.height=3.5}
+ggplot(data.frame(eps = eps), aes(x = eps)) +
+  geom_histogram(aes(y = after_stat(density)), bins = 30, fill = "steelblue", alpha = 0.7) +
+  stat_function(fun = dnorm, args = list(mean = 0, sd = noise_sigma),
+                color = "red", linetype = "dashed", linewidth = 1) +
+  labs(x = "Noise value", y = "Density",
+       title = "Noise distribution (t-distributed with df=4)",
+       subtitle = "Red dashed = Gaussian for comparison") +
+  theme_minimal(base_size = 11)
+```
+
+**Interpretation:** The t-distribution has heavier tails than Gaussian, meaning extreme values are more likely. This is realistic for biological assays where occasional measurement errors or biological outliers occur.
+
+## The Observed Data
+
+Now we add noise to the true signal to create what we would actually observe.
+
+```{r observed-data}
+Z_obs <- as.numeric(Z_true) + eps
+Z_obs_mat <- matrix(Z_obs, nrow = I, ncol = J)
+
+cat("True signal range:", round(range(Z_true), 3), "\n")
+cat("Observed data range:", round(range(Z_obs), 3), "\n")
+```
+
+**Interpretation:** We now have the noisy observations in the transformed scale. The next plot makes the noise effect visible.
+
+```{r plot-observed, fig.height=4}
+p_true <- plot_surface_dt(Z_true, "True signal")
+p_obs <- plot_surface_dt(Z_obs_mat, "Observed (with noise)")
+
+p_true | p_obs
+```
+
+**Interpretation:** The noise adds "graininess" to the observed surface, but the overall structure (decreasing toward bottom-right) is preserved. The challenge for our statistical method is to recover the true signal (and detect the interaction) despite this noise.
+
+# Transforming to Response Scale
+
+## The Transform
+
+Our simulation works in a "transformed scale" (where additivity is natural), but real data comes as viability/inhibition values in [0, 1]. We need to invert the transform.
+
+The default transform in our pipeline is the **logit**:
+$$
+Z = \text{logit}(y) = \log\left(\frac{y}{1-y}\right)
+$$
+
+Inverting gives:
+$$
+y = \text{logistic}(Z) = \frac{1}{1 + e^{-Z}}
+$$
+
+```{r transform-to-response}
+# Create transform object
+cfg_transform <- list(name = "logit", eps = 1e-6)
+transform <- make_transform(cfg_transform)
+
+# Transform observed Z back to viability scale
+y_obs <- transform$inverse(Z_obs)
+y_obs <- clamp01(y_obs, eps = 0)  # Ensure [0, 1]
+y_obs_mat <- matrix(y_obs, nrow = I, ncol = J)
+
+cat("Transform:", transform$name, "\n")
+cat("Response (viability) range:", round(range(y_obs), 3), "\n")
+```
+
+**Interpretation:** We have mapped the noisy transformed values back to viability. The next figure shows the matrix on the original response scale.
+
+```{r plot-response, fig.height=4}
+dt_response <- data.table(
+  i = rep(1:I, times = J),
+  j = rep(1:J, each = I),
+  value = as.numeric(y_obs_mat)
+)
+
+ggplot(dt_response, aes(x = j, y = i, fill = value)) +
+  geom_raster() +
+  scale_y_reverse() +
+  scale_fill_viridis_c(option = "viridis", limits = c(0, 1)) +
+  labs(x = "Dose index (Drug B)", y = "Dose index (Drug A)",
+       title = "Simulated Viability Data",
+       subtitle = "Values in [0, 1], decreasing with dose",
+       fill = "Viability") +
+  theme_minimal(base_size = 11) +
+  theme(panel.grid = element_blank())
+```
+
+**Interpretation:** The final simulated viability matrix looks like real drug screening data:
+
+- High viability (yellow) at low doses (top-left corner)
+- Low viability (dark purple) at high doses (bottom-right region)
+- Monotone decrease as doses increase
+
+# Using the Pipeline Function
+
+Now let's verify that our manual construction matches what the `simulate_one_matrix()` function produces.
+
+```{r use-pipeline-simulation}
+# Create a minimal config for simulation
+cfg <- list(
+  transform = list(name = "logit", eps = 1e-6),
+  responses = list(mode = "viability", clamp_01 = TRUE),
+  method = list(monotone_direction = "auto",
+                osqp = list(eps_abs = 1e-6, eps_rel = 1e-6, max_iter = 20000))
+)
+transform <- make_transform(cfg$transform)
+
+# Generate one matrix using the pipeline function
+df_sim <- simulate_one_matrix(
+  experiment_id = "test_001",
+  I = 8, J = 8,
+  interaction_strength = 0.8,
+  noise_sigma = 0.05,
+  heavy_tail_df = 4,
+  missing_rate = 0,
+  outlier_rate = 0,
+  transform = transform,
+  response_mode = "viability"
+)
+
+cat("Simulated data dimensions:", nrow(df_sim), "rows\n")
+cat("Columns:", paste(names(df_sim), collapse = ", "), "\n")
+head(df_sim)
+```
+
+The function returns data in **long format**, which is the standard input format for our analysis pipeline. Let's convert it to a matrix for visualization.
+
+```{r visualize-pipeline-output, fig.height=5}
+# Convert to matrix
+df_sim[, doseA_idx := match(doseA, sort(unique(doseA)))]
+df_sim[, doseB_idx := match(doseB, sort(unique(doseB)))]
+
+Y_sim <- matrix(NA, nrow = 8, ncol = 8)
+Y_sim[cbind(df_sim$doseA_idx, df_sim$doseB_idx)] <- df_sim$response
+
+dt_sim <- data.table(
+  i = rep(1:8, times = 8),
+  j = rep(1:8, each = 8),
+  value = as.numeric(Y_sim)
+)
+
+ggplot(dt_sim, aes(x = j, y = i, fill = value)) +
+  geom_raster() +
+  scale_y_reverse() +
+  scale_fill_viridis_c(option = "viridis", limits = c(0, 1)) +
+  labs(x = "Dose index (Drug B)", y = "Dose index (Drug A)",
+       title = "Pipeline-Generated Viability Matrix",
+       subtitle = paste0("experiment_id = ", df_sim$experiment_id[1]),
+       fill = "Viability") +
+  theme_minimal(base_size = 11) +
+  theme(panel.grid = element_blank())
+```
+
+**Interpretation:** The pipeline-generated matrix has the same structure as our manual construction. This confirms that the `simulate_one_matrix()` function is working correctly.
+
+# Comparing Null vs Alternative
+
+The key question in synergy detection is: *Can we distinguish matrices generated under the null (no interaction) from matrices generated under the alternative (with interaction)?*
+
+**Important:** In our simulation model, the observed data is:
+\[
+Z_{\text{obs}} = \underbrace{\theta^{\text{iso,true}}}_{\text{monotone surface}} + \underbrace{\varepsilon}_{\text{noise}},
+\qquad
+\Delta^{\text{true}} = \theta^{\text{iso,true}} - \mathrm{Proj}_{\mathcal{A}}(\theta^{\text{iso,true}}).
+\]
+
+So `simulate_one_matrix()` first constructs a **monotone true surface** (optionally from a bumped candidate, then projected), then adds heavy‑tailed noise. Under the null (`interaction_strength = 0`), the monotone surface is additive and \(\Delta^{\text{true}} \approx 0\), but noise is still present.
+
+Let's generate examples of both.
+
+```{r null-vs-alternative, fig.height=4}
+set.seed(123)
+
+# Null: no interaction
+df_null <- simulate_one_matrix(
+  experiment_id = "null",
+  I = 8, J = 8,
+  interaction_strength = 0.0,  # NO interaction
+  noise_sigma = 0.05,
+  heavy_tail_df = 4,
+  missing_rate = 0,
+  outlier_rate = 0,
+  transform = transform,
+  response_mode = "viability"
+)
+
+# Alternative: strong interaction
+df_alt <- simulate_one_matrix(
+  experiment_id = "alternative",
+  I = 8, J = 8,
+  interaction_strength = 0.8,  # STRONG interaction
+  noise_sigma = 0.05,
+  heavy_tail_df = 4,
+  missing_rate = 0,
+  outlier_rate = 0,
+  transform = transform,
+  response_mode = "viability"
+)
+
+# Convert to matrices
+to_matrix <- function(df) {
+  df <- as.data.table(df)
+  df[, i := match(doseA, sort(unique(doseA)))]
+  df[, j := match(doseB, sort(unique(doseB)))]
+  mat <- matrix(NA, nrow = 8, ncol = 8)
+  mat[cbind(df$i, df$j)] <- df$response
+  mat
+}
+
+Y_null <- to_matrix(df_null)
+Y_alt <- to_matrix(df_alt)
+
+# Plot side by side
+plot_mat <- function(mat, title) {
+  dt <- data.table(
+    i = rep(1:nrow(mat), times = ncol(mat)),
+    j = rep(1:ncol(mat), each = nrow(mat)),
+    value = as.numeric(mat)
+  )
+  ggplot(dt, aes(x = j, y = i, fill = value)) +
+    geom_raster() +
+    scale_y_reverse() +
+    scale_fill_viridis_c(option = "viridis", limits = c(0, 1)) +
+    labs(x = "Dose B", y = "Dose A", title = title, fill = "Viability") +
+    theme_minimal(base_size = 10) +
+    theme(panel.grid = element_blank())
+}
+
+p_null <- plot_mat(Y_null, "Null (no interaction)")
+p_alt <- plot_mat(Y_alt, "Alternative (synergy)")
+
+p_null | p_alt
+```
+
+**Interpretation:** Visually, it's difficult to distinguish the null from the alternative — both show decreasing viability with increasing dose. This is why we need a rigorous statistical method! The synergy signal is "hidden" in subtle deviations from additivity.
+
+# Replicates and Weighted Estimation
+
+## Why Replicates Matter
+
+In real drug screening experiments, each dose combination is typically measured **multiple times** (2-3 technical replicates). Replicates serve two purposes:
+
+1. **Reduce noise**: Averaging replicates reduces measurement error
+2. **Estimate variance**: Variance across replicates tells us how reliable each measurement is
+
+Our pipeline computes **weights** from replicate data: cells with more replicates and lower variance get higher weight. These weights can be used by any weighted estimation method. In the upcoming reports, we will introduce our **shape-constrained approach** (isotonic regression and additive decomposition), which uses these weights in a weighted least squares objective.
+
+## Simulating Data with Replicates
+
+The current `simulate_one_matrix()` function generates single observations. Let's create a version with replicates to understand how they affect estimation.
+
+```{r simulate-with-replicates}
+# Generate data with replicates manually
+set.seed(456)
+
+I <- 8
+J <- 8
+n_replicates <- 3
+
+# True signal (same as before)
+u_rep <- -cumsum(abs(rnorm(I, 0.3, 0.15)))
+v_rep <- -cumsum(abs(rnorm(J, 0.3, 0.15)))
+u_rep <- u_rep - mean(u_rep)
+v_rep <- v_rep - mean(v_rep)
+
+Z_true_rep <- matrix(0, I, J) +
+  matrix(u_rep, I, J) +
+  matrix(v_rep, I, J, byrow = TRUE)
+
+# Generate replicates with heteroskedastic noise
+# (some cells have higher variance than others)
+# Using higher noise to show realistic variation (typical CV ~10-20% in drug screens)
+base_sigma <- 0.3
+sigma_matrix <- matrix(runif(I*J, 0.5, 1.5) * base_sigma, I, J)
+
+# Create long-format data with replicates
+rep_data <- data.table()
+for (rep in 1:n_replicates) {
+  noise <- matrix(rnorm(I*J, 0, sigma_matrix), I, J)
+  Z_obs_rep <- Z_true_rep + noise
+  y_obs_rep <- transform$inverse(as.numeric(Z_obs_rep))
+  y_obs_rep <- clamp01(y_obs_rep, eps = 0)
+
+  dt_rep <- data.table(
+    doseA = rep(1:I, times = J),
+    doseB = rep(1:J, each = I),
+    response = y_obs_rep,
+    replicate = as.character(rep)
+  )
+  rep_data <- rbind(rep_data, dt_rep)
+}
+
+cat("Total observations:", nrow(rep_data), "\n")
+cat("Observations per cell:", n_replicates, "\n")
+cat("Unique dose combinations:", nrow(rep_data) / n_replicates, "\n")
+```
+
+## Visualizing Replicate Variation
+
+Let's look at how replicates vary within a few cells.
+
+```{r replicate-variation, fig.height=4}
+# Pick a few cells to examine
+sample_cells <- data.table(
+  doseA = c(2, 4, 6),
+  doseB = c(2, 4, 6)
+)
+
+rep_sample <- rep_data[sample_cells, on = .(doseA, doseB)]
+rep_sample[, cell := paste0("(", doseA, ",", doseB, ")")]
+
+# Calculate per-cell statistics
+cell_stats <- rep_data[, .(
+  mean_response = mean(response),
+  sd_response = sd(response),
+  n = .N
+), by = .(doseA, doseB)]
+
+p_reps <- ggplot(rep_sample, aes(x = cell, y = response)) +
+  geom_point(aes(color = replicate), size = 3, alpha = 0.7) +
+  stat_summary(fun = mean, geom = "crossbar", width = 0.5, color = "black") +
+  labs(x = "Cell (doseA, doseB)", y = "Response",
+       title = "Replicate variation within selected cells",
+       subtitle = "Black bar = mean across replicates") +
+  theme_minimal(base_size = 11)
+
+p_reps
+```
+
+## How Weights Are Computed
+
+The pipeline computes weights as:
+
+$$
+w_{ij} = \frac{m_{ij}}{s^2_{ij}}
+$$
+
+where $m_{ij}$ is the number of replicates and $s^2_{ij}$ is the sample variance (not standard deviation!). This formula comes from **weighted least squares theory**:
+
+- The variance of the sample mean $\bar{y}$ is $\sigma^2/m$
+- So the precision (inverse variance) is $m/\sigma^2$
+- We estimate this with $m/s^2$
+
+This means:
+
+- **More replicates** → higher weight (more confident in the mean)
+- **Lower variance** → higher weight (more precise measurement)
+
+**How will these weights be used?** In Reports 02-04, we will develop a shape-constrained method that fits monotone surfaces to the data. The objective function will be a **weighted sum of squared errors**:
+$$
+\text{minimize} \sum_{i,j} w_{ij} (\bar{Z}_{ij} - \theta_{ij})^2
+$$
+Cells with higher weights will have more influence on the fitted surface $\theta$.
+
+```{r compute-weights}
+# Use the pipeline's summarise_matrix function
+ms_rep <- summarise_matrix(
+  df_long = rep_data,
+  transform = transform,
+  response_mode = "viability",
+  method_direction = "auto",
+  tau = 1e-6,
+  winsor_q = 0.99
+)
+
+cat("barZ (mean transformed response) range:", round(range(ms_rep$barZ), 3), "\n")
+cat("Weight range:", round(range(ms_rep$w), 2), "\n")
+cat("Replicate counts (m) - should all be", n_replicates, ":", unique(as.numeric(ms_rep$m)), "\n")
+```
+
+**Interpretation:** We now have the per-cell means, variances, and weights. The next plot shows how variance and weight vary across the grid.
+
+```{r weight-distribution, fig.height=4}
+# Visualize weight distribution
+dt_weights <- data.table(
+  i = rep(1:I, times = J),
+  j = rep(1:J, each = I),
+  weight = as.numeric(ms_rep$w),
+  variance = as.numeric(ms_rep$s2)
+)
+
+p_weights <- ggplot(dt_weights, aes(x = j, y = i, fill = weight)) +
+  geom_raster() +
+  scale_y_reverse() +
+  scale_fill_viridis_c(option = "mako") +
+  labs(x = "Dose B", y = "Dose A",
+       title = "Weight matrix",
+       subtitle = "Higher weight = more influence on fit",
+       fill = "w") +
+  theme_minimal(base_size = 10) +
+  theme(panel.grid = element_blank())
+
+p_var <- ggplot(dt_weights, aes(x = j, y = i, fill = variance)) +
+  geom_raster() +
+  scale_y_reverse() +
+  scale_fill_viridis_c(option = "rocket") +
+  labs(x = "Dose B", y = "Dose A",
+       title = "Variance matrix",
+       subtitle = "Lower variance = higher weight",
+       fill = "s²") +
+  theme_minimal(base_size = 10) +
+  theme(panel.grid = element_blank())
+
+p_var | p_weights
+```
+
+**Interpretation:** The weight matrix shows which cells will have more influence on the isotonic fit. Cells with lower variance (more consistent replicates) get higher weights. This is important because:
+
+- Edge cells (monotherapy) are often more variable
+- Interior cells may have different noise characteristics
+- The weighting scheme automatically adjusts for this heteroskedasticity
+
+## Impact of Replicates on Estimation
+
+Replicates improve our estimate of the **true underlying signal** $\theta$. Here we compare how well the sample mean $\bar{Z}$ approximates the true signal with 1 vs 3 replicates. In the upcoming reports, we'll see that our shape-constrained method further improves on this by borrowing strength across cells through monotonicity constraints.
+
+```{r replicate-impact, fig.height=4}
+# Single replicate (just use replicate 1)
+rep1_data <- rep_data[replicate == "1"]
+
+ms_1rep <- summarise_matrix(
+  df_long = rep1_data,
+  transform = transform,
+  response_mode = "viability",
+  method_direction = "auto",
+  tau = 1e-6,
+  winsor_q = 0.99
+)
+
+# Compare barZ estimates
+rmse_1rep <- sqrt(mean((ms_1rep$barZ - transform$forward(clamp01(transform$inverse(as.numeric(Z_true_rep)))))^2, na.rm = TRUE))
+rmse_3rep <- sqrt(mean((ms_rep$barZ - transform$forward(clamp01(transform$inverse(as.numeric(Z_true_rep)))))^2, na.rm = TRUE))
+
+cat("RMSE of mean estimate (1 replicate):", round(rmse_1rep, 4), "\n")
+cat("RMSE of mean estimate (3 replicates):", round(rmse_3rep, 4), "\n")
+cat("Improvement from replicates:", round((rmse_1rep - rmse_3rep) / rmse_1rep * 100, 1), "%\n")
+```
+
+**Interpretation:** Averaging across replicates reduces the RMSE of the sample mean estimate $\bar{Z}$ relative to the true signal $\theta$. This improvement (roughly $\sqrt{n}$ factor) is a fundamental benefit of replication. Beyond just averaging, the variance estimates from replicates also enable our weighted approach to give less weight to noisy cells, further improving estimation quality (as we'll see in Report 02).
+
+## A Note on Real-World Data
+
+In practice, **2D drug combination screens often have limited or no replicates** due to cost and throughput constraints:
+
+- Testing 8×8 doses × 3 replicates = 192 wells per drug pair
+- Large screens (e.g., NCI-ALMANAC with 5,000+ drug pairs) cannot afford this
+- Common patterns: 3×3, 4×4, or 6×4 dose matrices, often without replicates
+
+Public datasets vary:
+
+- **NCI-ALMANAC**: Some combinations tested multiple times, but not systematic per-cell replication
+- **DrugComb**: Aggregates from multiple sources with varying replication
+- **1D monotherapy screens**: More commonly have 3+ replicates per dose
+
+Our pipeline handles this gracefully:
+
+- **With replicates**: Use variance-based weights ($w = m/s^2$)
+- **Without replicates**: Fall back to uniform weights via the `tau` floor parameter
+
+# Summary and Next Steps
+
+## What We Learned
+
+1. **Dose-response matrices** are I×J grids of measured responses at combinations of two drugs
+2. **Under no interaction (null)**, the response follows an additive model: $\theta = \alpha + u_i + v_j$
+3. **Monotonicity** is a key biological constraint: response should decrease (increase) consistently with dose
+4. **Interaction** manifests as deviation from additivity; we model it as a Gaussian bump
+5. **Noise** is heavy-tailed (t-distributed) to account for occasional extreme values
+6. The **transform** (logit) maps bounded responses to an unbounded scale where additivity is natural
+7. **Replicates** reduce noise and enable variance estimation; weights $w = m/s^2$ give more influence to reliable measurements
+
+## Sanity Checks Passed
+
+- Marginal effects $u$ and $v$ are monotone decreasing
+- The additive surface is 2D monotone
+- Noise distribution has heavier tails than Gaussian
+- Pipeline function produces data consistent with manual construction
+- Both null and alternative matrices have similar visual appearance (distinguishing them requires statistics)
+- Replicates reduce RMSE and enable heteroskedastic weighting
+- `summarise_matrix()` correctly computes per-cell means, variances, and weights
+
+## Next Steps
+
+Now that we understand how data is generated, the next report will explore **fitting the isotonic 2D surface** — the first component of our proposed method. We will:
+
+1. Fit a monotone surface to noisy data using OSQP
+2. Verify the fit satisfies monotonicity constraints
+3. Compare fitted surface to true underlying signal
+4. Understand when and why the fit deviates from the truth
+
+See: `02-isotonic-2d.Rmd`
+
+# Session Info
+
+```{r session-info}
+sessionInfo()
+```
+
+**Interpretation:** Session details above document the computational environment for reproducibility.

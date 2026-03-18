@@ -1,0 +1,632 @@
+---
+title: "07 — Perturbation Stability Analysis"
+author: "Amir Asiaee"
+date: '`r format(Sys.Date(), "%B %d, %Y")`'
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 3
+    number_sections: true
+    theme: yeti
+    highlight: kate
+    code_folding: show
+params:
+  seed: 42
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  warning = FALSE,
+  message = FALSE,
+  fig.width = 10,
+  fig.height = 6
+)
+
+knitr::opts_knit$set(root.dir = normalizePath(".."))
+```
+
+# Introduction
+
+A robust statistical method should produce stable results under small perturbations of the data. If adding a tiny amount of noise drastically changes our conclusions, we can't trust the method.
+
+In this report, we investigate the **stability** of our shape-constrained approach under:
+
+1. **Noise perturbation**: Adding small noise to observations
+2. **Single-cell perturbation**: Changing one observation at a time
+3. **Missing data**: Randomly removing observations
+4. **Outliers**: Introducing extreme values
+
+We'll also compare stability to traditional synergy methods.
+
+# Setup
+
+```{r load-packages}
+library(data.table)
+library(ggplot2)
+library(patchwork)
+
+source("R/pipeline.R")
+source("R/baselines_common.R")
+source("R/baselines_bliss.R")
+source("R/baselines_hsa.R")
+
+set.seed(params$seed)
+cat("Using seed:", params$seed, "\n")
+```
+
+**Interpretation:** The environment is ready and reproducible for perturbation experiments.
+
+# Analysis Options
+
+We define the transform and interaction summary once so all perturbation tests are consistent.
+
+```{r analysis-options}
+response_mode <- "viability"
+direction <- "decreasing"
+analysis_transform <- make_transform(list(name = "logit", eps = 1e-6))
+synergy_sign <- infer_synergy_sign(response_mode, direction)
+threshold <- 0.0
+stat_choice <- "S2"
+
+boot_residual_scale <- "df"
+# Rule-of-thumb df under a monotone-additive null; see experiments/00-bootstrap-df-scaling.md
+boot_df_null <- NULL
+
+cat("Transform:", analysis_transform$name, "\n")
+cat("Statistic:", stat_choice, "\n")
+cat("Synergy sign:", synergy_sign, "\n")
+cat("Bootstrap residual_scale:", boot_residual_scale, "\n")
+```
+
+**Interpretation:** We treat the observed data in viability space and map to the Z scale for our method. We track interaction energy (`S2`) as a single-number summary of overall deviation from monotone additivity. Note that `S2` is **two-sided** (it measures interaction magnitude, not “synergy vs antagonism”); direction is encoded in the sign pattern of \(\delta\) and can be summarized by the synergy index \(I_{\text{syn}}\). When we use bootstrap in this report, we apply a mild df-rescaling of residuals (`residual_scale = "df"`) to avoid underestimating noise.
+
+# Test Data Generation
+
+```{r generate-data}
+# Generate a moderately synergistic combination
+I <- 8
+J <- 8
+
+# Model-consistent interaction surface
+delta_strength <- 0.25
+surfaces <- simulate_true_surfaces(
+  I = I, J = J,
+  interaction_strength = delta_strength,
+  response_mode = "viability",
+  interaction_mode = "projected",
+  interaction_sign = "auto"
+)
+
+Z_true <- surfaces$theta_iso_true
+
+# Add observation noise in Z, then map to viability
+noise_sigma <- 0.08
+Z_obs <- as.numeric(Z_true) + rnorm(I * J, 0, noise_sigma)
+Z_obs <- matrix(Z_obs, I, J)
+V_obs <- matrix(analysis_transform$inverse(as.numeric(Z_obs)), I, J)
+V_obs <- matrix(clamp01(as.numeric(V_obs), eps = 0), I, J)
+
+# Base Z used by our method (derived from observed viability)
+Z_base <- matrix(analysis_transform$forward(as.numeric(V_obs)), I, J)
+w <- matrix(1, I, J)
+
+cat("Generated data:\n")
+cat("  Grid size:", I, "x", J, "\n")
+cat("  Interaction strength:", delta_strength, "\n")
+cat("  Noise sigma:", noise_sigma, "\n")
+```
+
+## Baseline Fit
+
+We first compute the baseline interaction statistic on the unperturbed data, using the logit‑transformed Z matrix derived from observed viability.
+
+```{r baseline-fit}
+# Fit our models to the original data
+fit_iso_orig <- isotonic_2d_fit(Z_base, w, direction = direction,
+                                 osqp_pars = list(eps_abs = 1e-8, eps_rel = 1e-8))
+fit_add_orig <- additive_ordered_fit(Z_base, w, direction = direction,
+                                      osqp_pars = list(eps_abs = 1e-8, eps_rel = 1e-8))
+
+delta_orig <- fit_iso_orig$theta - fit_add_orig$theta
+t_orig <- interaction_stat(stat_choice, delta_orig, w,
+                           sum(w * (Z_base - fit_add_orig$theta)^2),
+                           sum(w * (Z_base - fit_iso_orig$theta)^2),
+                           synergy_sign = synergy_sign, threshold = threshold)
+summ_orig <- interaction_summaries(delta_orig, w, synergy_sign = synergy_sign, threshold = threshold)
+
+cat("Original fit:\n")
+cat("  Statistic:", stat_choice, "=", round(t_orig, 4), "\n")
+cat("  Max |delta|:", round(max(abs(delta_orig)), 4), "\n")
+cat("  Synergy index:", round(summ_orig$synergy_index, 3), "\n")
+```
+
+# Noise Perturbation Analysis
+
+## How Stable is the Test Statistic?
+
+We add small noise and measure how much the test statistic changes.
+
+```{r noise-perturbation}
+n_perturb <- 50
+perturbation_sigmas <- c(0.01, 0.02, 0.05, 0.1)
+
+perturb_results <- data.frame()
+
+for (sigma_p in perturbation_sigmas) {
+  t_values <- numeric(n_perturb)
+
+  for (i in 1:n_perturb) {
+    # Add perturbation
+    V_perturbed <- V_obs + rnorm(I * J, 0, sigma_p)
+    V_perturbed <- clamp01(V_perturbed, eps = 0)
+    Z_perturbed <- matrix(analysis_transform$forward(as.numeric(V_perturbed)), I, J)
+
+    # Refit models
+    fit_iso_p <- isotonic_2d_fit(Z_perturbed, w, direction = direction,
+                                  osqp_pars = list(eps_abs = 1e-8, eps_rel = 1e-8))
+    fit_add_p <- additive_ordered_fit(Z_perturbed, w, direction = direction,
+                                       osqp_pars = list(eps_abs = 1e-8, eps_rel = 1e-8))
+
+    delta_p <- fit_iso_p$theta - fit_add_p$theta
+    t_values[i] <- interaction_stat(stat_choice, delta_p, w,
+                                    sum(w * (Z_perturbed - fit_add_p$theta)^2),
+                                    sum(w * (Z_perturbed - fit_iso_p$theta)^2),
+                                    synergy_sign = synergy_sign, threshold = threshold)
+  }
+
+  perturb_results <- rbind(perturb_results, data.frame(
+    sigma_perturb = sigma_p,
+    t_value = t_values,
+    t_orig = t_orig
+  ))
+}
+```
+
+**Interpretation:** We now have the statistic under many small noise perturbations. The next plot shows its variability across perturbation scales.
+
+```{r noise-perturbation-plot, fig.height=5}
+perturb_summary <- as.data.table(perturb_results)[, .(
+  mean_t = mean(t_value),
+  sd_t = sd(t_value),
+  cv = sd(t_value) / mean(t_value) * 100
+), by = sigma_perturb]
+
+ggplot(perturb_results, aes(x = factor(sigma_perturb), y = t_value)) +
+  geom_boxplot(fill = "steelblue", alpha = 0.7) +
+  geom_hline(yintercept = t_orig, color = "red", linetype = "dashed", linewidth = 1) +
+  annotate("text", x = 0.5, y = t_orig, label = "Original", color = "red",
+           hjust = 0, vjust = -0.5) +
+  labs(x = "Perturbation sigma", y = paste0("Statistic (", stat_choice, ")"),
+       title = "Stability of Test Statistic Under Noise Perturbation",
+       subtitle = paste0("Original ", stat_choice, " = ", round(t_orig, 3), "; ", n_perturb, " perturbations each")) +
+  theme_minimal(base_size = 11)
+```
+
+**Interpretation:** The boxplots summarize dispersion across perturbations. Next we tabulate the CV and relative error.
+
+```{r noise-stability-table}
+perturb_summary$relative_error <- abs(perturb_summary$mean_t - t_orig) / t_orig * 100
+
+knitr::kable(perturb_summary, digits = 3,
+             col.names = c("Perturbation σ", "Mean t", "SD t", "CV (%)", "Rel. Error (%)"),
+             caption = "Test Statistic Stability Under Noise Perturbation")
+```
+
+**Interpretation:** The coefficient of variation (CV) tells us how much the test statistic varies relative to its mean. Lower CV = more stable.
+
+# Single-Cell Perturbation (Influence Analysis)
+
+## Which Cells Have Most Influence?
+
+We perturb each cell one at a time and measure the change in test statistic.
+
+```{r single-cell-influence}
+influence_matrix <- matrix(NA, I, J)
+delta_t <- 0.2  # Amount to perturb each cell
+
+for (i in 1:I) {
+  for (j in 1:J) {
+    # Perturb single cell
+    V_perturbed <- V_obs
+    V_perturbed[i, j] <- V_obs[i, j] + delta_t
+    V_perturbed <- clamp01(V_perturbed, eps = 0)
+    Z_perturbed <- matrix(analysis_transform$forward(as.numeric(V_perturbed)), I, J)
+
+    # Refit
+    fit_iso_p <- isotonic_2d_fit(Z_perturbed, w, direction = direction,
+                                  osqp_pars = list(eps_abs = 1e-8, eps_rel = 1e-8))
+    fit_add_p <- additive_ordered_fit(Z_perturbed, w, direction = direction,
+                                       osqp_pars = list(eps_abs = 1e-8, eps_rel = 1e-8))
+
+    delta_p <- fit_iso_p$theta - fit_add_p$theta
+    t_perturbed <- interaction_stat(stat_choice, delta_p, w,
+                                    sum(w * (Z_perturbed - fit_add_p$theta)^2),
+                                    sum(w * (Z_perturbed - fit_iso_p$theta)^2),
+                                    synergy_sign = synergy_sign, threshold = threshold)
+
+    influence_matrix[i, j] <- (t_perturbed - t_orig) / delta_t
+  }
+}
+```
+
+**Interpretation:** We computed cell‑wise influence scores. The next heatmap shows where the statistic is most sensitive.
+
+```{r influence-heatmap, fig.height=5}
+df_influence <- expand.grid(i = 1:I, j = 1:J)
+df_influence$influence <- as.numeric(influence_matrix)
+
+max_inf <- max(abs(df_influence$influence), na.rm = TRUE)
+
+ggplot(df_influence, aes(x = factor(j), y = factor(i), fill = influence)) +
+  geom_tile() +
+  scale_fill_gradient2(low = "blue", mid = "white", high = "red",
+                       midpoint = 0, limits = c(-max_inf, max_inf)) +
+  labs(x = "Drug B index", y = "Drug A index", fill = "Influence\n(∂t/∂Z)",
+       title = "Influence of Each Cell on Test Statistic",
+       subtitle = paste0("Positive = increasing ", stat_choice, "; Negative = decreasing")) +
+  theme_minimal(base_size = 11) +
+  coord_equal()
+```
+
+**Interpretation:** High-influence cells have the most impact on the test statistic. These are typically:
+
+- Cells where interaction is detected (center of the bump)
+- Cells at the boundary between additive and non-additive regions
+
+## Most Influential Cells
+
+```{r top-influential}
+df_influence <- df_influence[order(-abs(df_influence$influence)), ]
+top_cells <- head(df_influence, 10)
+
+knitr::kable(top_cells, digits = 3,
+             col.names = c("Row (Drug A)", "Col (Drug B)", "Influence"),
+             caption = "Top 10 Most Influential Cells")
+```
+
+# Missing Data Robustness
+
+## Random Missing Cells
+
+What happens when some cells are missing (e.g., failed experiments)?
+
+```{r missing-data}
+missing_fractions <- c(0.05, 0.10, 0.15, 0.20)
+n_missing_sims <- 30
+
+missing_results <- data.frame()
+
+for (frac in missing_fractions) {
+  n_missing <- round(I * J * frac)
+
+  for (sim in 1:n_missing_sims) {
+    # Randomly select cells to "remove"
+    missing_idx <- sample(I * J, n_missing)
+    w_missing <- w
+    w_missing[missing_idx] <- 0  # Weight of 0 = missing
+
+    # Refit with missing data
+    fit_iso_m <- isotonic_2d_fit(Z_base, w_missing, direction = direction,
+                                  osqp_pars = list(eps_abs = 1e-8, eps_rel = 1e-8))
+    fit_add_m <- additive_ordered_fit(Z_base, w_missing, direction = direction,
+                                       osqp_pars = list(eps_abs = 1e-8, eps_rel = 1e-8))
+
+    delta_m <- fit_iso_m$theta - fit_add_m$theta
+    t_missing <- interaction_stat(stat_choice, delta_m, w_missing,
+                                  sum(w_missing * (Z_base - fit_add_m$theta)^2),
+                                  sum(w_missing * (Z_base - fit_iso_m$theta)^2),
+                                  synergy_sign = synergy_sign, threshold = threshold)
+
+    missing_results <- rbind(missing_results, data.frame(
+      missing_frac = frac,
+      t_value = t_missing,
+      sim = sim
+    ))
+  }
+}
+```
+
+**Interpretation:** We now have the statistic under random missingness patterns. Next we visualize its distribution by missing fraction.
+
+```{r missing-data-plot, fig.height=5}
+ggplot(missing_results, aes(x = factor(missing_frac), y = t_value)) +
+  geom_boxplot(fill = "steelblue", alpha = 0.7) +
+  geom_hline(yintercept = t_orig, color = "red", linetype = "dashed", linewidth = 1) +
+  annotate("text", x = 0.5, y = t_orig, label = "No missing", color = "red",
+           hjust = 0, vjust = -0.5) +
+  labs(x = "Fraction of missing cells", y = paste0("Statistic (", stat_choice, ")"),
+       title = "Robustness to Missing Data",
+       subtitle = paste0(n_missing_sims, " random patterns per fraction")) +
+  theme_minimal(base_size = 11)
+```
+
+**Interpretation:** The boxplots show variability as missingness increases. The table below summarizes mean bias and variability.
+
+```{r missing-summary}
+missing_summary <- as.data.table(missing_results)[, .(
+  mean_t = mean(t_value),
+  sd_t = sd(t_value),
+  bias = mean(t_value) - t_orig,
+  bias_pct = (mean(t_value) - t_orig) / t_orig * 100
+), by = missing_frac]
+
+knitr::kable(missing_summary, digits = 3,
+             col.names = c("Missing Frac.", "Mean t", "SD t", "Bias", "Bias (%)"),
+             caption = "Test Statistic Under Missing Data")
+```
+
+**Interpretation:** The test statistic should remain relatively stable under moderate missing data, though variance increases.
+
+# Outlier Robustness
+
+## Single Outlier Impact
+
+What if one cell has an extreme outlier value?
+
+```{r outlier-analysis}
+outlier_magnitudes <- c(1, 2, 3, 5)  # Standard deviations from mean
+outlier_results <- data.frame()
+
+for (outlier_sd in outlier_magnitudes) {
+  for (i in 1:I) {
+    for (j in 1:J) {
+      # Add outlier at cell (i, j)
+      V_outlier <- V_obs
+      V_outlier[i, j] <- V_obs[i, j] + outlier_sd * sd(as.numeric(V_obs))
+      V_outlier <- clamp01(V_outlier, eps = 0)
+      Z_outlier <- matrix(analysis_transform$forward(as.numeric(V_outlier)), I, J)
+
+      # Refit
+      fit_iso_o <- isotonic_2d_fit(Z_outlier, w, direction = direction,
+                                    osqp_pars = list(eps_abs = 1e-8, eps_rel = 1e-8))
+      fit_add_o <- additive_ordered_fit(Z_outlier, w, direction = direction,
+                                         osqp_pars = list(eps_abs = 1e-8, eps_rel = 1e-8))
+
+      sse_add_o <- sum(w * (Z_outlier - fit_add_o$theta)^2)
+      sse_iso_o <- sum(w * (Z_outlier - fit_iso_o$theta)^2)
+      delta_o <- fit_iso_o$theta - fit_add_o$theta
+      t_outlier <- interaction_stat(stat_choice, delta_o, w, sse_add_o, sse_iso_o,
+                                    synergy_sign = synergy_sign, threshold = threshold)
+
+      outlier_results <- rbind(outlier_results, data.frame(
+        outlier_sd = outlier_sd,
+        i = i,
+        j = j,
+        t_value = t_outlier,
+        t_change = t_outlier - t_orig
+      ))
+    }
+  }
+}
+```
+
+**Interpretation:** We have test‑statistic changes for all outlier positions and magnitudes. Next we summarize the distribution of changes.
+
+```{r outlier-boxplot, fig.height=5}
+ggplot(outlier_results, aes(x = factor(outlier_sd), y = t_change)) +
+  geom_boxplot(fill = "orange", alpha = 0.7) +
+  geom_hline(yintercept = 0, color = "gray40", linetype = "dashed") +
+  labs(x = "Outlier magnitude (SD)", y = "Change in test statistic",
+       title = "Impact of Single-Cell Outliers",
+       subtitle = "Each outlier position tested") +
+  theme_minimal(base_size = 11)
+```
+
+**Interpretation:** The boxplots show how outlier severity affects the statistic. The table below quantifies mean and worst‑case changes.
+
+```{r outlier-summary}
+outlier_summary <- as.data.table(outlier_results)[, .(
+  mean_change = mean(t_change),
+  max_change = max(abs(t_change)),
+  sd_change = sd(t_change)
+), by = outlier_sd]
+
+knitr::kable(outlier_summary, digits = 3,
+             col.names = c("Outlier SD", "Mean Change", "Max |Change|", "SD Change"),
+             caption = "Outlier Impact on Test Statistic")
+```
+
+**Interpretation:** Shape-constrained methods are partially robust to outliers because the isotonic constraint "averages out" extreme values locally.
+
+# Comparison with Baseline Methods
+
+## Surface Stability: Bliss vs Shape-Constrained
+
+```{r bliss-stability}
+# Convert a viability matrix into the long format expected by our baseline helpers.
+make_long_format <- function(V_mat, dosesA = 1:nrow(V_mat), dosesB = 1:ncol(V_mat)) {
+  df <- expand.grid(doseA = dosesA, doseB = dosesB)
+  df$response <- as.numeric(V_mat)
+  df$response_viability <- df$response
+  df
+}
+
+# For baselines (like Bliss), the primary object is a *synergy surface* S(i,j).
+# For our method, the primary object is the *interaction surface* δ(i,j).
+#
+# Comparing a global statistic (like S2) to a collapsed scalar from Bliss (like sum(S))
+# is not meaningful: sum(S) can cancel signs and can be near zero, making ratios explode.
+# Here we compare methods fairly by asking: how much does the *surface* change under perturbation?
+
+surface_metrics <- function(base, pert, eps = 1e-12) {
+  b <- as.numeric(base)
+  p <- as.numeric(pert)
+  ok <- is.finite(b) & is.finite(p)
+  b <- b[ok]
+  p <- p[ok]
+  denom <- sqrt(mean(b^2))
+  rel_rmse <- sqrt(mean((b - p)^2)) / max(eps, denom)
+  corr <- if (sd(b) < eps || sd(p) < eps) NA_real_ else cor(b, p)
+  energy_ratio <- mean(p^2) / max(eps, mean(b^2))
+  data.frame(rel_rmse = rel_rmse, corr = corr, energy_ratio = energy_ratio)
+}
+
+# Original Bliss surface
+df_orig <- make_long_format(V_obs)
+bliss_orig <- bliss_synergy(df_orig, response_mode = "viability")$synergy
+
+# Compare stability of surfaces across the same perturbed datasets
+surface_stability <- data.frame()
+
+for (sigma_p in perturbation_sigmas) {
+  for (rep_id in 1:n_perturb) {
+    V_perturbed <- V_obs + rnorm(I * J, 0, sigma_p)
+    V_perturbed <- matrix(clamp01(as.numeric(V_perturbed), eps = 0), I, J)
+    Z_perturbed <- matrix(analysis_transform$forward(as.numeric(V_perturbed)), I, J)
+
+    # Shape-constrained δ surface
+    fit_iso_p <- isotonic_2d_fit(Z_perturbed, w, direction = direction,
+                                 osqp_pars = list(eps_abs = 1e-8, eps_rel = 1e-8))
+    fit_add_p <- additive_ordered_fit(Z_perturbed, w, direction = direction,
+                                      osqp_pars = list(eps_abs = 1e-8, eps_rel = 1e-8))
+    delta_p <- fit_iso_p$theta - fit_add_p$theta
+    m_sc <- surface_metrics(delta_orig, delta_p)
+    surface_stability <- rbind(surface_stability, cbind(
+      data.frame(sigma_perturb = sigma_p, rep = rep_id, method = "Shape-constrained"),
+      m_sc
+    ))
+
+    # Bliss synergy surface
+    df_p <- make_long_format(V_perturbed)
+    bliss_p <- bliss_synergy(df_p, response_mode = "viability")$synergy
+    m_bliss <- surface_metrics(bliss_orig, bliss_p)
+    surface_stability <- rbind(surface_stability, cbind(
+      data.frame(sigma_perturb = sigma_p, rep = rep_id, method = "Bliss"),
+      m_bliss
+    ))
+  }
+}
+```
+
+**Interpretation:** We now have **surface-level** stability metrics for both methods under identical perturbations. Next we visualize how the surface changes scale with perturbation strength.
+
+```{r compare-stability, fig.height=5}
+p_rmse <- ggplot(surface_stability, aes(x = factor(sigma_perturb), y = rel_rmse, fill = method)) +
+  geom_boxplot(alpha = 0.75, outlier.size = 0.7) +
+  scale_fill_manual(values = c("Bliss" = "orange", "Shape-constrained" = "steelblue")) +
+  labs(x = "Perturbation σ", y = "Relative RMSE (surface)",
+       title = "Surface Stability Under Noise",
+       subtitle = "Lower is better; relRMSE = RMSE / RMS(surface)") +
+  theme_minimal(base_size = 11)
+
+p_corr <- ggplot(surface_stability, aes(x = factor(sigma_perturb), y = corr, fill = method)) +
+  geom_boxplot(alpha = 0.75, outlier.size = 0.7) +
+  scale_fill_manual(values = c("Bliss" = "orange", "Shape-constrained" = "steelblue")) +
+  labs(x = "Perturbation σ", y = "Correlation (surface)",
+       title = "Surface Stability Under Noise",
+       subtitle = "Higher is better; Pearson correlation vs original surface") +
+  theme_minimal(base_size = 11)
+
+p_rmse / p_corr
+```
+
+## Surface Stability Summary
+
+```{r cv-comparison}
+stability_summary <- as.data.table(surface_stability)[, .(
+  median_rel_rmse = median(rel_rmse, na.rm = TRUE),
+  median_corr = median(corr, na.rm = TRUE),
+  median_energy_ratio = median(energy_ratio, na.rm = TRUE)
+), by = .(sigma_perturb, method)]
+
+knitr::kable(
+  stability_summary,
+  digits = 3,
+  caption = "Surface stability summaries (median across perturbations)"
+)
+```
+
+**Interpretation:** These summaries quantify how much the *whole surface* shifts when we add noise. This is the natural stability target for drug‑combination landscapes, and it avoids comparing incomparable scalars (like `S2` vs `sum(Bliss)`).
+
+# Bootstrap Variance Estimation
+
+## Using Bootstrap to Quantify Uncertainty
+
+Our wild bootstrap also provides uncertainty estimates for the test statistic.
+
+```{r bootstrap-variance}
+# Run bootstrap
+boot_result <- wild_bootstrap(Z_base, w, direction = direction, B = 200,
+                              seed = params$seed,
+                              osqp_pars = list(eps_abs = 1e-8, eps_rel = 1e-8),
+                              n_cores = 1, use_parallel = FALSE,
+                              stat = stat_choice,
+                              synergy_sign = synergy_sign,
+                              threshold = threshold,
+                              residual_scale = boot_residual_scale,
+                              df_null = boot_df_null)
+
+cat("Bootstrap results:\n")
+cat("  Observed stat:", round(boot_result$t0, 4), "\n")
+cat("  Bootstrap SD:", round(sd(boot_result$t_star, na.rm = TRUE), 4), "\n")
+cat("  Bootstrap 95% CI:", round(quantile(boot_result$t_star, c(0.025, 0.975), na.rm = TRUE), 4), "\n")
+cat("  P-value:", round(boot_result$p_value, 4), "\n")
+```
+
+**Interpretation:** The bootstrap summary quantifies uncertainty for the chosen statistic. The histogram below shows the full bootstrap distribution.
+
+```{r bootstrap-dist, fig.height=4}
+df_boot <- data.frame(t_star = boot_result$t_star)
+
+ggplot(df_boot, aes(x = t_star)) +
+  geom_histogram(bins = 30, fill = "steelblue", alpha = 0.7) +
+  geom_vline(xintercept = boot_result$t0, color = "red", linewidth = 1, linetype = "dashed") +
+  labs(x = paste0("Bootstrap statistic (", stat_choice, ")"), y = "Count",
+       title = "Bootstrap Distribution of Test Statistic",
+       subtitle = paste0("Observed = ", round(boot_result$t0, 3),
+                        "; SD = ", round(sd(boot_result$t_star, na.rm = TRUE), 3))) +
+  theme_minimal(base_size = 11)
+```
+
+# Summary
+
+## Key Findings
+
+1. **Noise Perturbation**: The test statistic is reasonably stable under small noise perturbations (CV typically < 20% for moderate perturbation levels)
+
+2. **Influential Cells**: Cells in the center of the dose matrix (where interaction is strongest) have the most influence on the test statistic
+
+3. **Missing Data**: The method handles missing data gracefully by using weighted estimation; bias remains small up to ~15-20% missing
+
+4. **Outliers**: Single outliers have limited impact due to the shape constraints, which provide some natural robustness
+
+5. **Comparison**: When we compare *surfaces* (δ vs Bliss synergy) rather than incomparable scalars, the shape-constrained interaction surface typically changes more smoothly under perturbations (higher correlation / lower relative RMSE), especially at modest noise levels.
+
+## Practical Recommendations
+
+Based on this analysis:
+
+- **Data quality**: Ensure measurements are reasonably precise (CV < 10-15%)
+- **Missing data**: Method tolerates some missing cells; consider imputation for large gaps
+- **Outliers**: The shape constraints provide natural robustness, but extreme outliers should be investigated
+- **Replication**: Use bootstrap to quantify uncertainty in the test statistic
+
+## Stability Properties of Shape Constraints
+
+The shape constraints (isotonic + additive) provide stability by:
+
+1. **Pooling information**: The isotonic constraint borrows strength across neighboring cells
+2. **Regularization**: Shape constraints act as implicit regularization
+3. **Robustness**: Extreme values are "pulled back" to satisfy monotonicity
+
+## Next Steps
+
+We've analyzed perturbation stability. Next, we examine sensitivity to **data transformations**:
+
+- Identity (raw viability)
+- Logit transform
+- Asinh transform
+
+Different transforms may affect the detection and interpretation of synergy.
+
+See: `08-transform-sensitivity.Rmd`
+
+# Session Info
+
+```{r session-info}
+sessionInfo()
+```
+
+**Interpretation:** Session details above document the computational environment for reproducibility.

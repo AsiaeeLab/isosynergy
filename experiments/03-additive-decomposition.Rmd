@@ -1,0 +1,729 @@
+---
+title: "03 — Monotone-Additive Decomposition: The Null Hypothesis Model"
+author: "Amir Asiaee"
+date: '`r format(Sys.Date(), "%B %d, %Y")`'
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 3
+    number_sections: true
+    theme: yeti
+    highlight: kate
+    code_folding: show
+params:
+  seed: 42
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  warning = FALSE,
+  message = FALSE,
+  fig.width = 10,
+  fig.height = 6
+)
+
+knitr::opts_knit$set(root.dir = normalizePath(".."))
+```
+
+# Introduction
+
+In Report 02, we learned how to fit a 2D monotone surface $\theta_{\text{iso}}$ to dose-response data. But fitting a monotone surface alone doesn't tell us whether the two drugs **interact** — it just gives us a smooth, shape-constrained estimate of the response.
+
+To detect interaction, we need a **null hypothesis**: what would the response look like if the drugs acted *independently*? This is the **additive model**:
+
+$$
+\theta_{\text{add}} = \alpha + u_i + v_j
+$$
+
+where:
+
+- $\alpha$ is a global intercept
+- $u_i$ is the effect of Drug A at dose level $i$
+- $v_j$ is the effect of Drug B at dose level $j$
+
+If this model fits well, there's no evidence of interaction. If the full isotonic fit $\theta_{\text{iso}}$ is significantly better, we have evidence of synergy or antagonism.
+
+In this report, we will:
+
+1. Understand the mathematical structure of the additive model
+2. See why identifiability constraints are needed
+3. Fit the monotone-additive model using our `additive_ordered_fit()` function
+4. Extract and interpret the $u$ and $v$ components
+5. Compare additive vs isotonic fits under null and alternative scenarios
+
+# Setup
+
+```{r load-packages}
+library(data.table)
+library(ggplot2)
+library(patchwork)
+library(Matrix)
+
+source("R/pipeline.R")
+
+set.seed(params$seed)
+cat("Using seed:", params$seed, "\n")
+```
+
+**Interpretation:** Packages and core functions are loaded, and the seed is fixed for reproducibility.
+
+# The Additive Model
+
+## Mathematical Structure
+
+The additive model assumes the response at dose combination $(i, j)$ is the sum of:
+
+1. A **baseline** $\alpha$ (response when both drugs are at reference level)
+2. A **Drug A effect** $u_i$ (contribution of Drug A at dose $i$)
+3. A **Drug B effect** $v_j$ (contribution of Drug B at dose $j$)
+
+$$
+\theta_{ij} = \alpha + u_i + v_j
+$$
+
+This is also called a **main effects model** — there are no interaction terms $u_i \cdot v_j$ or $\gamma_{ij}$.
+
+## Why Additivity = No Interaction
+
+Under additivity, the effect of increasing Drug A dose is the **same regardless of Drug B dose**:
+
+$$
+\theta_{i+1,j} - \theta_{i,j} = u_{i+1} - u_i \quad \text{(independent of } j \text{)}
+$$
+
+Similarly for Drug B. This means the drugs don't "talk to each other" — their effects simply add up.
+
+**Interaction** means this doesn't hold: the effect of one drug depends on the dose of the other.
+
+## Visualizing Additive Surfaces
+
+Let's create a simple additive surface to build intuition.
+
+```{r additive-example, fig.height=5}
+I <- 8
+J <- 8
+
+# Create monotone decreasing effects
+u_example <- -cumsum(abs(rnorm(I, 0.25, 0.1)))
+v_example <- -cumsum(abs(rnorm(J, 0.25, 0.1)))
+
+# Center for identifiability
+u_example <- u_example - mean(u_example)
+v_example <- v_example - mean(v_example)
+alpha_example <- 0
+
+# Build additive surface
+theta_add_example <- matrix(alpha_example, I, J) +
+  matrix(u_example, I, J) +
+  matrix(v_example, I, J, byrow = TRUE)
+
+# Plot
+dt_add <- data.table(
+  i = rep(1:I, times = J),
+  j = rep(1:J, each = I),
+  value = as.numeric(theta_add_example)
+)
+
+p_surface <- ggplot(dt_add, aes(x = j, y = i, fill = value)) +
+  geom_raster() +
+  scale_y_reverse() +
+  scale_fill_viridis_c(option = "plasma") +
+  labs(x = "Dose B index (j)", y = "Dose A index (i)",
+       title = "Additive Surface: θ = α + u_i + v_j",
+       subtitle = "No interaction — effects simply add",
+       fill = "θ") +
+  theme_minimal(base_size = 11) +
+  theme(panel.grid = element_blank())
+
+# Plot the marginal effects
+df_u <- data.frame(i = 1:I, u = u_example)
+df_v <- data.frame(j = 1:J, v = v_example)
+
+p_u <- ggplot(df_u, aes(x = i, y = u)) +
+  geom_line(color = "steelblue", linewidth = 1) +
+  geom_point(color = "steelblue", size = 2) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "gray50") +
+  labs(x = "Dose A index", y = "u_i", title = "Drug A Effect") +
+  theme_minimal(base_size = 10)
+
+p_v <- ggplot(df_v, aes(x = j, y = v)) +
+  geom_line(color = "darkorange", linewidth = 1) +
+  geom_point(color = "darkorange", size = 2) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "gray50") +
+  labs(x = "Dose B index", y = "v_j", title = "Drug B Effect") +
+  theme_minimal(base_size = 10)
+
+p_surface | (p_u / p_v)
+```
+
+**Interpretation:** The additive surface (left) is completely determined by the two 1D effect curves (right). Notice:
+
+- Both $u$ and $v$ are monotone decreasing (higher dose → more negative effect)
+- The surface has a characteristic "saddle" or "ramp" structure
+- There's no localized "bump" or "dip" — that would indicate interaction
+
+# The Identifiability Problem
+
+## Why We Need Constraints
+
+The additive model $\theta_{ij} = \alpha + u_i + v_j$ is **not identifiable** without constraints. We can add any constant $c$ to all $u_i$ and subtract it from $\alpha$ without changing $\theta$:
+
+$$
+\theta_{ij} = \alpha + u_i + v_j = (\alpha - c) + (u_i + c) + v_j
+$$
+
+Similarly for $v_j$. This means infinitely many $(\alpha, u, v)$ combinations give the same surface.
+
+## The Sum-to-Zero Constraints
+
+To make the model identifiable, we impose:
+
+$$
+\sum_{i=1}^{I} u_i = 0 \quad \text{and} \quad \sum_{j=1}^{J} v_j = 0
+$$
+
+This fixes $\alpha$ as the **grand mean** of the surface, and $u$, $v$ as **deviations** from that mean.
+
+```{r check-identifiability}
+cat("Sum of u:", round(sum(u_example), 6), "(should be ~0)\n")
+cat("Sum of v:", round(sum(v_example), 6), "(should be ~0)\n")
+cat("Mean of surface:", round(mean(theta_add_example), 4), "\n")
+cat("Alpha:", round(alpha_example, 4), "\n")
+cat("These should be equal (up to numerical precision)\n")
+```
+
+## Adding Monotonicity Constraints
+
+In addition to identifiability, we want $u$ and $v$ to be **monotone**:
+
+- $u_1 \geq u_2 \geq \cdots \geq u_I$ (Drug A effect decreases with dose)
+- $v_1 \geq v_2 \geq \cdots \geq v_J$ (Drug B effect decreases with dose)
+
+This is the **monotone-additive** model, combining additivity with shape constraints.
+
+# The Quadratic Program Formulation
+
+## Optimization Problem
+
+We want to find $(\alpha, u, v)$ that minimize weighted squared error subject to constraints:
+
+$$
+\min_{\alpha, u, v} \sum_{i,j} w_{ij} \left( \bar{Z}_{ij} - \alpha - u_i - v_j \right)^2
+$$
+
+subject to:
+
+- $u_{i+1} - u_i \leq 0$ for all $i$ (monotonicity of $u$)
+- $v_{j+1} - v_j \leq 0$ for all $j$ (monotonicity of $v$)
+- $\sum_i u_i = 0$ (identifiability)
+- $\sum_j v_j = 0$ (identifiability)
+
+## Design Matrix
+
+We can write this as a regression problem with design matrix $X$:
+
+$$
+\theta = X \beta, \quad \beta = (\alpha, u_1, \ldots, u_I, v_1, \ldots, v_J)^T
+$$
+
+Each row of $X$ corresponds to a cell $(i,j)$ with:
+
+- Column 1: always 1 (for $\alpha$)
+- Columns 2 to $I+1$: indicator for $u_i$
+- Columns $I+2$ to $I+J+1$: indicator for $v_j$
+
+```{r design-matrix-example}
+# Show design matrix structure for small grid
+I_small <- 3
+J_small <- 3
+n_small <- I_small * J_small
+p_small <- 1 + I_small + J_small
+
+# Build design matrix
+X_example <- matrix(0, n_small, p_small)
+colnames(X_example) <- c("alpha", paste0("u", 1:I_small), paste0("v", 1:J_small))
+
+row <- 0
+for (j in 1:J_small) {
+  for (i in 1:I_small) {
+    row <- row + 1
+    X_example[row, 1] <- 1           # alpha
+    X_example[row, 1 + i] <- 1       # u_i
+    X_example[row, 1 + I_small + j] <- 1  # v_j
+  }
+}
+
+rownames(X_example) <- paste0("(", rep(1:I_small, J_small), ",", rep(1:J_small, each = I_small), ")")
+knitr::kable(X_example, caption = "Design matrix for 3×3 grid")
+```
+
+**Interpretation:** Each row has exactly three 1's: one for $\alpha$, one for the appropriate $u_i$, and one for the appropriate $v_j$. This sparse structure makes the QP efficient.
+
+# Fitting the Monotone-Additive Model
+
+## Generate Test Data
+
+Let's create test data and fit the additive model.
+
+```{r generate-test-data}
+I <- 8
+J <- 8
+
+# True additive signal (no interaction)
+u_true <- -cumsum(abs(rnorm(I, 0.3, 0.1)))
+v_true <- -cumsum(abs(rnorm(J, 0.3, 0.1)))
+u_true <- u_true - mean(u_true)
+v_true <- v_true - mean(v_true)
+alpha_true <- 0
+
+Z_true <- matrix(alpha_true, I, J) +
+  matrix(u_true, I, J) +
+  matrix(v_true, I, J, byrow = TRUE)
+
+# Add noise
+noise_sigma <- 0.1
+Z_obs <- Z_true + rnorm(I*J, 0, noise_sigma)
+Z_obs_mat <- matrix(Z_obs, I, J)
+
+# Uniform weights
+w <- matrix(1, I, J)
+
+cat("True surface range:", round(range(Z_true), 3), "\n")
+cat("Observed data range:", round(range(Z_obs), 3), "\n")
+```
+
+## Fit the Additive Model
+
+```{r fit-additive}
+fit_add <- additive_ordered_fit(
+  barZ = Z_obs_mat,
+  w = w,
+  direction = "decreasing",
+  osqp_pars = list(eps_abs = 1e-8, eps_rel = 1e-8, max_iter = 20000)
+)
+
+cat("OSQP status:", fit_add$status, "\n")
+cat("Fitted alpha:", round(fit_add$alpha, 4), "\n")
+cat("Fitted u range:", round(range(fit_add$u), 3), "\n")
+cat("Fitted v range:", round(range(fit_add$v), 3), "\n")
+```
+
+## Verify Constraints
+
+Let's check that all constraints are satisfied.
+
+```{r verify-constraints}
+# Check identifiability constraints
+cat("Sum of fitted u:", format(sum(fit_add$u), scientific = TRUE), "(should be ~0)\n")
+cat("Sum of fitted v:", format(sum(fit_add$v), scientific = TRUE), "(should be ~0)\n")
+
+# Check monotonicity
+u_mono <- all(diff(fit_add$u) <= 1e-6)
+v_mono <- all(diff(fit_add$v) <= 1e-6)
+cat("u is monotone decreasing:", u_mono, "\n")
+cat("v is monotone decreasing:", v_mono, "\n")
+
+# Check surface monotonicity
+theta_add <- fit_add$theta
+is_2d_mono <- check_monotone_2d(theta_add, direction = "decreasing", tol = 1e-6)
+cat("Additive surface is 2D monotone:", is_2d_mono, "\n")
+```
+
+**Important:** The additive surface $\theta_{\text{add}}$ is **automatically 2D monotone** if both $u$ and $v$ are monotone. This is because:
+
+$$
+\theta_{i+1,j} - \theta_{i,j} = u_{i+1} - u_i \leq 0
+$$
+
+and similarly for columns.
+
+## Compare Fitted vs True Effects
+
+```{r compare-effects, fig.height=4}
+df_compare_u <- data.frame(
+  i = 1:I,
+  true = u_true,
+  fitted = fit_add$u
+)
+
+df_compare_v <- data.frame(
+  j = 1:J,
+  true = v_true,
+  fitted = fit_add$v
+)
+
+p_u_compare <- ggplot(df_compare_u) +
+  geom_line(aes(x = i, y = true), color = "blue", linewidth = 1, linetype = "dashed") +
+  geom_line(aes(x = i, y = fitted), color = "darkgreen", linewidth = 1) +
+  geom_point(aes(x = i, y = fitted), color = "darkgreen", size = 2) +
+  labs(x = "Dose A index", y = "Effect",
+       title = "Drug A Effect (u)",
+       subtitle = "Dashed blue = true, Green = fitted") +
+  theme_minimal(base_size = 10)
+
+p_v_compare <- ggplot(df_compare_v) +
+  geom_line(aes(x = j, y = true), color = "blue", linewidth = 1, linetype = "dashed") +
+  geom_line(aes(x = j, y = fitted), color = "darkorange", linewidth = 1) +
+  geom_point(aes(x = j, y = fitted), color = "darkorange", size = 2) +
+  labs(x = "Dose B index", y = "Effect",
+       title = "Drug B Effect (v)",
+       subtitle = "Dashed blue = true, Orange = fitted") +
+  theme_minimal(base_size = 10)
+
+p_u_compare | p_v_compare
+```
+
+**Interpretation:** The visual comparison suggests the fitted marginals track the truth. Next, we quantify that fit with RMSE.
+
+```{r effect-errors}
+rmse_u <- sqrt(mean((fit_add$u - u_true)^2))
+rmse_v <- sqrt(mean((fit_add$v - v_true)^2))
+rmse_surface <- sqrt(mean((theta_add - Z_true)^2))
+
+cat("RMSE for u:", round(rmse_u, 4), "\n")
+cat("RMSE for v:", round(rmse_v, 4), "\n")
+cat("RMSE for surface:", round(rmse_surface, 4), "\n")
+```
+
+**Interpretation:** The fitted effects closely track the true effects. The monotonicity constraint helps regularize the fit, especially when noise is present.
+
+# Comparing Additive vs Isotonic Fits
+
+## Under the Null (No Interaction)
+
+When the true data-generating process is additive, both fits should be similar.
+
+```{r compare-null, fig.height=5}
+# Fit isotonic model
+fit_iso <- isotonic_2d_fit(Z_obs_mat, w, direction = "decreasing",
+                           osqp_pars = list(eps_abs = 1e-8, eps_rel = 1e-8))
+
+theta_iso <- fit_iso$theta
+theta_add <- fit_add$theta
+
+# Compute SSE
+sse_iso <- sum(w * (Z_obs_mat - theta_iso)^2)
+sse_add <- sum(w * (Z_obs_mat - theta_add)^2)
+
+cat("SSE (isotonic):", round(sse_iso, 4), "\n")
+cat("SSE (additive):", round(sse_add, 4), "\n")
+cat("Difference (add - iso):", round(sse_add - sse_iso, 4), "\n")
+n_cells <- I * J
+cat("MSE (isotonic):", round(sse_iso / n_cells, 4), "\n")
+cat("MSE (additive):", round(sse_add / n_cells, 4), "\n")
+```
+
+**Interpretation:** These SSE/MSE numbers provide a baseline under the null. Next we compare the fitted surfaces visually to see whether \(\delta\) is structured or just noise.
+
+```{r plot-comparison-null, fig.height=4}
+plot_surface <- function(mat, title) {
+  dt <- data.table(
+    i = rep(1:nrow(mat), times = ncol(mat)),
+    j = rep(1:ncol(mat), each = nrow(mat)),
+    value = as.numeric(mat)
+  )
+  ggplot(dt, aes(x = j, y = i, fill = value)) +
+    geom_raster() +
+    scale_y_reverse() +
+    scale_fill_viridis_c(option = "plasma") +
+    labs(x = "j", y = "i", title = title, fill = "θ") +
+    theme_minimal(base_size = 10) +
+    theme(panel.grid = element_blank())
+}
+
+# Common scale
+zlim <- range(c(theta_iso, theta_add))
+
+p_iso <- plot_surface(theta_iso, "Isotonic Fit (θ_iso)") +
+  scale_fill_viridis_c(option = "plasma", limits = zlim)
+p_add <- plot_surface(theta_add, "Additive Fit (θ_add)") +
+  scale_fill_viridis_c(option = "plasma", limits = zlim)
+
+delta_null <- theta_iso - theta_add
+p_delta <- plot_surface(delta_null, "Difference (θ_iso - θ_add)") +
+  scale_fill_gradient2(low = "blue", mid = "white", high = "red", midpoint = 0)
+
+(p_iso | p_add) / p_delta
+```
+
+**Interpretation:** Under the null, the *structure* of the two fits should be similar, but the SSE gap can still be non‑trivial because isotonic regression can track cell‑level noise while staying monotone. This is why we focus on the **interaction surface pattern** (is it structured or just speckled noise?) and on **bootstrap calibration**, not on a single SSE gap.
+
+## Under the Alternative (With Interaction)
+
+Now let's add an interaction bump and see what happens.
+
+```{r generate-alternative}
+# Model-consistent alternative: monotone true surface + projected interaction
+interaction_strength <- 0.8
+
+surfaces_alt <- simulate_true_surfaces(
+  I = I, J = J,
+  interaction_strength = interaction_strength,
+  response_mode = "viability",
+  interaction_mode = "projected",
+  interaction_sign = "auto"
+)
+
+Delta_true <- surfaces_alt$delta_true
+Z_true_alt <- surfaces_alt$theta_iso_true
+
+Z_obs_alt <- as.numeric(Z_true_alt) + rnorm(I*J, 0, noise_sigma)
+Z_obs_alt_mat <- matrix(Z_obs_alt, I, J)
+
+cat("Interaction strength:", interaction_strength, "\n")
+cat("Max |Delta_true|:", round(max(abs(Delta_true)), 3), "\n")
+```
+
+**Interpretation:** We have generated an alternative with a model-consistent interaction surface. Next we fit both models to this noisy data.
+
+```{r fit-alternative}
+# Fit both models to data with interaction
+fit_iso_alt <- isotonic_2d_fit(Z_obs_alt_mat, w, direction = "decreasing",
+                               osqp_pars = list(eps_abs = 1e-8, eps_rel = 1e-8))
+fit_add_alt <- additive_ordered_fit(Z_obs_alt_mat, w, direction = "decreasing",
+                                    osqp_pars = list(eps_abs = 1e-8, eps_rel = 1e-8))
+
+theta_iso_alt <- fit_iso_alt$theta
+theta_add_alt <- fit_add_alt$theta
+
+# Compute SSE
+sse_iso_alt <- sum(w * (Z_obs_alt_mat - theta_iso_alt)^2)
+sse_add_alt <- sum(w * (Z_obs_alt_mat - theta_add_alt)^2)
+
+cat("SSE (isotonic):", round(sse_iso_alt, 4), "\n")
+cat("SSE (additive):", round(sse_add_alt, 4), "\n")
+cat("Difference (add - iso):", round(sse_add_alt - sse_iso_alt, 4), "\n")
+cat("MSE (isotonic):", round(sse_iso_alt / n_cells, 4), "\n")
+cat("MSE (additive):", round(sse_add_alt / n_cells, 4), "\n")
+```
+
+**Interpretation:** The numeric gaps summarize overall fit differences, but the interaction pattern is best assessed visually. The next panel compares detected \(\delta\) to the true \(\Delta\).
+
+```{r plot-comparison-alt, fig.height=8}
+zlim_alt <- range(c(theta_iso_alt, theta_add_alt))
+
+p_iso_alt <- plot_surface(theta_iso_alt, "Isotonic Fit (θ_iso)") +
+  scale_fill_viridis_c(option = "plasma", limits = zlim_alt)
+p_add_alt <- plot_surface(theta_add_alt, "Additive Fit (θ_add)") +
+  scale_fill_viridis_c(option = "plasma", limits = zlim_alt)
+
+delta_alt <- theta_iso_alt - theta_add_alt
+p_delta_alt <- plot_surface(delta_alt, "Detected Interaction: δ = θ_iso - θ_add") +
+  scale_fill_gradient2(low = "blue", mid = "white", high = "red", midpoint = 0,
+                       name = "δ")
+
+p_true_delta <- plot_surface(Delta_true, "True Interaction (Δ)") +
+  scale_fill_gradient2(low = "blue", mid = "white", high = "red", midpoint = 0,
+                       name = "Δ")
+
+(p_iso_alt | p_add_alt) / (p_delta_alt | p_true_delta)
+```
+
+**Interpretation:** Under the alternative:
+
+- The isotonic fit is flexible enough to absorb localized deviations while respecting monotonicity.
+- The additive fit is constrained to be separable, so any structured deviation must appear in \(\delta\).
+- The comparison to \(\Delta^{\text{true}}\) tells us whether the detected pattern aligns with the model‑consistent interaction, or whether it is mostly noise.
+
+## The Test Statistic
+
+The difference in SSE between additive and isotonic fits is one **global test statistic**:
+
+$$
+t_{\text{int}} = \text{SSE}_{\text{add}} - \text{SSE}_{\text{iso}}
+$$
+
+This is always $\geq 0$ because the isotonic model is more flexible (additive is a special case).
+
+```{r test-statistic}
+t_int_null <- sse_add - sse_iso
+t_int_alt <- sse_add_alt - sse_iso_alt
+
+cat("Test statistic under null:", round(t_int_null, 4), "\n")
+cat("Test statistic under alternative:", round(t_int_alt, 4), "\n")
+cat("Ratio:", round(t_int_alt / t_int_null, 1), "x larger under alternative\n")
+```
+
+**Interpretation:** This statistic reflects how much the isotonic fit improves over the additive fit, but it can be **dominated by noise‑tracking** when the surface is strongly monotone. That’s why we also compute **interaction‑surface summaries** (next section) and rely on **bootstrap calibration** rather than a single SSE gap.
+
+# Decomposing the Interaction
+
+## Summary Statistics
+
+We can summarize the interaction surface $\delta = \theta_{\text{iso}} - \theta_{\text{add}}$ with several metrics:
+
+```{r interaction-metrics}
+# For viability on a decreasing scale, synergy corresponds to negative delta.
+synergy_sign <- "negative"
+threshold <- 0.0
+
+metrics_null <- interaction_summaries(delta_null, w, synergy_sign = synergy_sign, threshold = threshold)
+metrics_alt <- interaction_summaries(delta_alt, w, synergy_sign = synergy_sign, threshold = threshold)
+
+cat("=== Under Null ===\n")
+cat("S² (total interaction):", round(metrics_null$S2, 4), "\n")
+cat("S²+ (pos energy):", round(metrics_null$S2_plus, 4), "\n")
+cat("S²- (neg energy):", round(metrics_null$S2_minus, 4), "\n")
+cat("Synergy index (signed):", round(metrics_null$synergy_index, 3), "\n")
+cat("Max |δ|:", round(metrics_null$max_abs_delta, 4), "\n")
+cat("Max synergy:", round(metrics_null$max_synergy, 4), "\n")
+cat("Area synergy:", metrics_null$area_synergy, "\n\n")
+
+cat("=== Under Alternative ===\n")
+cat("S² (total interaction):", round(metrics_alt$S2, 4), "\n")
+cat("S²+ (pos energy):", round(metrics_alt$S2_plus, 4), "\n")
+cat("S²- (neg energy):", round(metrics_alt$S2_minus, 4), "\n")
+cat("Synergy index (signed):", round(metrics_alt$synergy_index, 3), "\n")
+cat("Max |δ|:", round(metrics_alt$max_abs_delta, 4), "\n")
+cat("Max synergy:", round(metrics_alt$max_synergy, 4), "\n")
+cat("Area synergy:", metrics_alt$area_synergy, "\n")
+```
+
+**Interpretation:**
+
+- **S²** measures total interaction *energy* (stable global “interaction exists” summary, but it is sign‑agnostic).
+- **S²− / S²+** split interaction energy into negative vs positive parts of \(\delta\) (which can differ even though \(\sum w\,\delta = 0\)).
+- The **synergy index** compares directional energies in the synergy direction vs the opposite direction; values near +1 indicate mostly synergy‑like deviations, values near −1 mostly antagonism‑like, and values near 0 mixed sign.
+- **Max synergy / Area synergy** give a “strongest cell” or “any‑synergy‑anywhere” view.
+
+For viability on a decreasing scale, **synergy corresponds to negative \(\delta\)**, so we interpret **S-** and **max_synergy** as synergy‑type summaries. If we were working on inhibition (increasing scale), the sign would flip.
+
+# Using the Pipeline
+
+Let's verify our understanding using the full pipeline.
+
+```{r pipeline-integration}
+# Create config
+cfg <- list(
+  transform = list(name = "logit", eps = 1e-6),
+  responses = list(mode = "viability", clamp_01 = TRUE),
+  weights = list(tau = 1e-6, winsor_q = 0.99),
+  method = list(monotone_direction = "auto",
+                osqp = list(eps_abs = 1e-6, eps_rel = 1e-6, max_iter = 20000)),
+  bootstrap = list(B = 10, seed = 1),
+  project = list(n_cores = 1)
+)
+transform <- make_transform(cfg$transform)
+
+# Generate a matrix with interaction
+df_sim <- simulate_one_matrix(
+  experiment_id = "test",
+  I = 8, J = 8,
+  interaction_strength = 0.3,
+  noise_sigma = 0.05,
+  heavy_tail_df = 4,
+  missing_rate = 0,
+  outlier_rate = 0,
+  transform = transform,
+  response_mode = "viability"
+)
+
+# Use interaction_fit which does both fits
+ms <- summarise_matrix(
+  df_long = df_sim,
+  transform = transform,
+  response_mode = "viability",
+  method_direction = "auto",
+  tau = 1e-6,
+  winsor_q = 0.99
+)
+
+fit_int <- interaction_fit(ms$barZ, ms$w, direction = ms$direction,
+                           osqp_pars = cfg$method$osqp)
+
+cat("Interaction fit results:\n")
+cat("  t_int:", round(fit_int$t_int, 4), "\n")
+cat("  S²:", round(fit_int$S2, 4), "\n")
+cat("  S²+:", round(fit_int$S2_plus, 4), "\n")
+cat("  S²-:", round(fit_int$S2_minus, 4), "\n")
+cat("  synergy_index:", round(fit_int$synergy_index, 3), "\n")
+cat("  max_synergy:", round(fit_int$max_synergy, 4), "\n")
+cat("  area_synergy:", round(fit_int$area_synergy, 4), "\n")
+cat("  SSE_iso:", round(fit_int$sse_iso, 4), "\n")
+cat("  SSE_add:", round(fit_int$sse_add, 4), "\n")
+
+# Normalization: many statistics scale linearly with the weight magnitude.
+# A stable way to report effect sizes is to divide by sum(w), yielding weighted averages.
+w_sum <- sum(ms$w[is.finite(ms$w) & ms$w > 0])
+w_mean <- mean(ms$w[is.finite(ms$w) & ms$w > 0])
+w_max <- max(ms$w[is.finite(ms$w) & ms$w > 0])
+
+cat("\nWeight scale summary:\n")
+cat("  sum(w):", signif(w_sum, 4), "\n")
+cat("  mean(w):", signif(w_mean, 4), "\n")
+cat("  max(w):", signif(w_max, 4), "\n")
+
+cat("\nNormalized (divide by sum(w)):\n")
+cat("  t_int / sum(w):", round(fit_int$t_int / w_sum, 6), "\n")
+cat("  mean(delta^2):", round(fit_int$S2_mean, 6), "\n")
+cat("  mean(max(delta,0)):", round(fit_int$Splus_mean, 6), "\n")
+cat("  mean(max(-delta,0)):", round(fit_int$Sminus_mean, 6), "\n")
+cat("  SSE_iso / sum(w):", round(fit_int$sse_iso / w_sum, 6), "\n")
+cat("  SSE_add / sum(w):", round(fit_int$sse_add / w_sum, 6), "\n")
+```
+
+**Interpretation:** The raw values above are **weighted sums**, so they can be numerically large when weights are large (e.g., when there are no replicates and we floor the variance at a small `tau`, giving \(w_{ij}\approx 1/\tau\)). The normalized versions divide by \(\sum w\), turning these into weighted *average* scales (weighted MSEs or average deviations), which are typically easier to compare across datasets and settings. The next figure shows the fitted surfaces and the interaction map.
+
+```{r pipeline-visualization, fig.height=8}
+p1 <- plot_surface(ms$barZ, "Observed Data (barZ)")
+p2 <- plot_surface(fit_int$theta_iso, "Isotonic Fit (θ_iso)")
+p3 <- plot_surface(fit_int$theta_add, "Additive Fit (θ_add)")
+p4 <- plot_surface(fit_int$delta, "Interaction (δ = θ_iso - θ_add)") +
+  scale_fill_gradient2(low = "blue", mid = "white", high = "red", midpoint = 0)
+
+(p1 | p2) / (p3 | p4)
+```
+
+**Interpretation:** The pipeline correctly:
+
+1. Fits both isotonic and additive models
+2. Computes the interaction surface \(\delta\)
+3. Produces multiple summaries (e.g., \(t_{\text{int}}\), \(S^2\), \(S_+\), \(S_-\), max/area synergy)
+
+# Summary and Next Steps
+
+## What We Learned
+
+1. The **additive model** $\theta = \alpha + u_i + v_j$ represents **no interaction** (null hypothesis)
+2. **Identifiability constraints** $\sum u = \sum v = 0$ are needed to fix the decomposition
+3. **Monotonicity constraints** on $u$ and $v$ ensure biological plausibility
+4. The additive surface is **automatically 2D monotone** when marginal effects are monotone
+5. The **interaction surface** \(\delta = \theta_{\text{iso}} - \theta_{\text{add}}\) reveals deviations from additivity
+6. There are **multiple global summaries** of interaction (e.g., \(S^2\), max/area synergy); \(t_{\text{int}}\) is one option but can be noise‑dominated
+
+## Key Properties Verified
+
+- `additive_ordered_fit()` enforces identifiability constraints (sums = 0)
+- Monotonicity of $u$ and $v$ is enforced by OSQP
+- Under the null, \(\delta\) should look like unstructured noise around zero
+- Under the alternative, \(\delta\) should show a coherent pattern aligned with \(\Delta^{\text{true}}\)
+- Global summaries (e.g., \(S^2\), max/area synergy) should increase with interaction strength
+
+## Correctness Check
+
+The `additive_ordered_fit()` function appears correct:
+
+- QP formulation includes both monotonicity and sum constraints
+- Fitted effects recover true effects well
+- Interaction surface $\delta$ correctly identifies synergy/antagonism
+
+## Next Steps
+
+We now have two fits and multiple interaction summaries. To assess significance, we need a **null distribution** for a *chosen* statistic. In the next report, we will:
+
+1. Use **wild bootstrap** to generate data under the additive null
+2. Build the null distribution of a selected statistic (e.g., \(t_{\text{int}}\), \(S^2\), max/area synergy)
+3. Compute p-values for interaction detection
+4. Verify calibration (Type I error control)
+
+See: `04-interaction-test.Rmd`
+
+# Session Info
+
+```{r session-info}
+sessionInfo()
+```
+
+**Interpretation:** Session details above document the computational environment for reproducibility.

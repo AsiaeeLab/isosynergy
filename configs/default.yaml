@@ -1,0 +1,85 @@
+project:
+  seed: 1
+  out_dir_results: "results"
+  out_dir_figures: "figures"
+  cache_dir: "cache"
+  n_cores: 8
+
+data:
+  sources: ["nci_almanac","drugcombdb"]   # ["nci_almanac","drugcombdb","dream","simulation"]
+  raw_dir: "data/raw"
+  processed_dir: "data/processed"
+  standard_files:
+    # Optional: point to already-standardized long-format files (parquet/csv) per source.
+    # Each must contain: experiment_id, drugA, drugB, cell_line, doseA, doseB, response, replicate
+    nci_almanac: "data/processed/nci_almanac_matrices.parquet"
+    drugcombdb: "data/processed/drugcomb_matrices.parquet"
+    drugcomb_demo: "data/processed/drugcomb_demo_matrices.parquet"
+    dream: null
+
+responses:
+  # Interpretation of the raw response in the input files.
+  # - "viability": higher = less effect; expected to be non-increasing with dose
+  # - "inhibition": higher = more effect; expected to be non-decreasing with dose
+  mode: "viability"
+  clamp_01: true
+
+transform:
+  name: "logit"          # identity | log | logit | asinh
+  eps: 1.0e-6
+  asinh_scale: 1.0
+
+weights:
+  tau: 1.0e-6
+  winsor_q: 0.99
+
+method:
+  monotone_direction: "auto"  # auto | increasing | decreasing
+  osqp:
+    eps_abs: 1.0e-6
+    eps_rel: 1.0e-6
+    max_iter: 20000
+
+interaction:
+  # "auto" uses response mode: viability -> negative (dip), inhibition -> positive (bump)
+  synergy_sign: "auto"        # auto | negative | positive
+  threshold: 0.0              # threshold for area-based summaries
+
+bootstrap:
+  B: 200
+  seed: 1
+  stat: "S2"               # t_int | S2 | Splus | Sminus | max_synergy | area_synergy | area_synergy_weighted
+  # Wild bootstrap residual scaling.
+  # "df" applies a mild degrees-of-freedom correction to avoid anti-conservative p-values
+  # when comparing a flexible shape-constrained alternative to a fitted null.
+  # See: experiments/00-bootstrap-df-scaling.md
+  residual_scale: "df"      # none | df | hc2
+  df_null: null             # optional override; null uses run-count heuristic in R/bootstrap.R
+
+experiments:
+  perturbation:
+    n_matrices: 50
+    outlier_k: 4.0
+    n_outliers: [1, 3]
+  simulation:
+    # For publication-quality power curves, include a range of interaction strengths.
+    # These are bump amplitudes on the candidate surface before projection; see experiments/05-calibration-power.Rmd.
+    n_matrices: 180     # power curve: 30 replicates x 5 positive strengths + 30 null; null calibration (n=200) was run separately with interaction_strength: [0.0]
+    grid_I: 8
+    grid_J: 8
+    interaction_strength: [0.0, 0.8, 1.2, 1.4, 1.6, 1.8]
+    interaction_mode: "projected"  # projected | raw
+    interaction_sign: "auto"       # auto | negative | positive
+    bump_sigma: null               # optional: scalar or length-2
+    bump_center: null              # optional: length-2
+    noise_sigma: 0.1
+    heavy_tail_df: 4
+    missing_rate: 0.0
+    outlier_rate: 0.0
+
+baselines:
+  # Baselines are implemented natively in R (no external synergy packages required).
+  zip_curvefit: true
+
+clinical:
+  drugpair_csv: null   # optional CSV with columns: drugA, drugB

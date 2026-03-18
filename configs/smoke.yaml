@@ -1,0 +1,61 @@
+project:
+  seed: 1
+  out_dir_results: "results"
+  out_dir_figures: "figures"
+  cache_dir: "cache"
+  n_cores: 1
+
+data:
+  sources: ["simulation"]
+  raw_dir: "data/raw"
+  processed_dir: "data/processed"
+
+responses:
+  mode: "viability"
+  clamp_01: true
+
+transform:
+  name: "logit"
+  eps: 1.0e-6
+
+weights:
+  tau: 1.0e-6
+  winsor_q: 0.99
+
+method:
+  monotone_direction: "auto"
+  osqp:
+    eps_abs: 1.0e-6
+    eps_rel: 1.0e-6
+    max_iter: 20000
+
+interaction:
+  synergy_sign: "auto"
+  threshold: 0.0
+
+bootstrap:
+  B: 10
+  seed: 1
+  stat: "t_int"
+
+experiments:
+  perturbation:
+    n_matrices: 3
+    outlier_k: 4.0
+    n_outliers: [1, 3]
+  simulation:
+    n_matrices: 5
+    grid_I: 6
+    grid_J: 6
+    interaction_strength: [0.0, 0.4]
+    interaction_mode: "projected"
+    interaction_sign: "auto"
+    bump_sigma: null
+    bump_center: null
+    noise_sigma: 0.05
+    heavy_tail_df: 6
+    missing_rate: 0.0
+    outlier_rate: 0.0
+
+baselines:
+  zip_curvefit: true

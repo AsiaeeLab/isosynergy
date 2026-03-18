@@ -1,0 +1,911 @@
+---
+title: "04 — Statistical Inference: Wild Bootstrap for Interaction Testing"
+author: "Amir Asiaee"
+date: '`r format(Sys.Date(), "%B %d, %Y")`'
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 3
+    number_sections: true
+    theme: yeti
+    highlight: kate
+    code_folding: show
+params:
+  seed: 42
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  warning = FALSE,
+  message = FALSE,
+  fig.width = 10,
+  fig.height = 6
+)
+
+knitr::opts_knit$set(root.dir = normalizePath(".."))
+```
+
+# Introduction
+
+In Report 03, we learned how to compute the interaction surface \(\delta = \theta_{\text{iso}} - \theta_{\text{add}}\) and several **global summaries** (e.g., \(t_{\text{int}}, S^2, \max\)‑synergy). But how do we know if a chosen statistic is "significant"?
+
+We need a **null distribution** — what values of a chosen statistic would we see if there truly were no interaction? Then we can compute a **p-value**: the probability of seeing our observed statistic (or larger) under the null.
+
+The challenge is that we don't know the true null distribution analytically. Instead, we use **wild bootstrap** to generate it empirically.
+
+In this report, we will:
+
+1. Understand why standard bootstrap doesn't work here
+2. Learn how wild bootstrap preserves heteroskedasticity
+3. Implement the bootstrap procedure step by step
+4. Compute p-values and interpret them
+5. Verify the procedure with simulated data
+
+# Setup
+
+```{r load-packages}
+library(data.table)
+library(ggplot2)
+library(patchwork)
+
+source("R/pipeline.R")
+
+set.seed(params$seed)
+cat("Using seed:", params$seed, "\n")
+```
+
+**Interpretation:** The bootstrap utilities are loaded and the RNG seed is fixed so the example is reproducible.
+
+# Why Bootstrap?
+
+## The Problem
+
+We choose a test statistic that summarizes interaction strength (e.g., \(t_{\text{int}}\), \(S^2\), max/area synergy). Under the null hypothesis (no interaction), it should behave like a typical draw from its null distribution. Under the alternative, it should shift toward the tail.
+
+But what counts as "large"? We need to know the **null distribution** of $t_{\text{int}}$.
+
+## Why Not Parametric Tests?
+
+Traditional approaches (F-tests, likelihood ratio tests) assume:
+
+- Known error distribution (usually Gaussian)
+- Homoskedastic errors (same variance everywhere)
+- Independence
+
+Our setting violates these:
+
+- Heavy-tailed errors (t-distributed)
+- Heteroskedastic errors (variance varies across cells)
+- Shape constraints (isotonic regression is non-standard)
+
+## Bootstrap to the Rescue
+
+Bootstrap methods estimate the null distribution by **resampling** from the data. The key idea: if we can generate data that "looks like" it came from the null, we can see what $t_{\text{int}}$ values arise.
+
+# Wild Bootstrap
+
+## Why Not Standard Bootstrap?
+
+Standard bootstrap resamples observations with replacement. But this doesn't work well for regression problems because:
+
+1. It doesn't preserve the covariate structure (dose levels)
+2. It doesn't respect heteroskedasticity
+
+## The Wild Bootstrap Idea
+
+Wild bootstrap works differently:
+
+1. Fit the null model (additive) to get residuals: $r_{ij} = \bar{Z}_{ij} - \hat{\theta}_{ij}^{\text{add}}$
+2. Generate bootstrap data by **randomly flipping residual signs**: $Z_{ij}^* = \hat{\theta}_{ij}^{\text{add}} + \xi_{ij} \cdot r_{ij}$
+3. Where $\xi_{ij} \in \{-1, +1\}$ with equal probability (Rademacher distribution)
+
+This preserves:
+
+- The dose structure (we're adding residuals back to the same locations)
+- Heteroskedasticity (cells with large residuals keep large residuals)
+- The null hypothesis (we generate from the additive fit)
+
+## Visual Intuition
+
+```{r wild-bootstrap-intuition, fig.height=5}
+# Create a simple example
+I <- 6
+J <- 6
+
+# True additive signal
+u_demo <- -cumsum(abs(rnorm(I, 0.2, 0.05)))
+v_demo <- -cumsum(abs(rnorm(J, 0.2, 0.05)))
+u_demo <- u_demo - mean(u_demo)
+v_demo <- v_demo - mean(v_demo)
+
+theta_add_demo <- matrix(0, I, J) +
+  matrix(u_demo, I, J) +
+  matrix(v_demo, I, J, byrow = TRUE)
+
+# Add noise
+noise_demo <- rnorm(I*J, 0, 0.1)
+Z_obs_demo <- as.numeric(theta_add_demo) + noise_demo
+
+# Compute residuals
+r_demo <- Z_obs_demo - as.numeric(theta_add_demo)
+
+# Generate one bootstrap sample
+set.seed(123)
+xi_demo <- sample(c(-1, 1), I*J, replace = TRUE)
+Z_star_demo <- as.numeric(theta_add_demo) + xi_demo * r_demo
+
+# Visualize
+df_demo <- data.frame(
+  type = rep(c("Original Residuals", "Flipped Residuals"), each = I*J),
+  value = c(r_demo, xi_demo * r_demo)
+)
+
+ggplot(df_demo, aes(x = value, fill = type)) +
+  geom_histogram(bins = 20, alpha = 0.7, position = "identity") +
+  facet_wrap(~ type, ncol = 2) +
+  labs(x = "Residual value", y = "Count",
+       title = "Wild Bootstrap: Randomly Flipping Residual Signs",
+       subtitle = "Distribution shape is preserved, but individual signs are randomized") +
+  theme_minimal(base_size = 11) +
+  theme(legend.position = "none")
+```
+
+**Interpretation:** The wild bootstrap preserves the distribution of residuals (same spread) but randomizes individual signs. This generates new data that:
+
+- Has the same noise characteristics as the original
+- Is generated under the null hypothesis (additive model)
+
+# Step-by-Step Bootstrap Procedure
+
+## Step 1: Fit the Null Model
+
+First, we fit the additive model to get $\hat{\theta}_{\text{add}}$.
+
+```{r step1-fit-null}
+# Generate test data with NO interaction (null is true)
+I <- 8
+J <- 8
+
+set.seed(params$seed + 101)
+surfaces_null <- simulate_true_surfaces(
+  I = I, J = J,
+  interaction_strength = 0,
+  response_mode = "viability",
+  interaction_mode = "projected",
+  interaction_sign = "auto"
+)
+
+Z_true <- surfaces_null$theta_iso_true
+
+# Add noise
+noise_sigma <- 0.1
+set.seed(params$seed + 102)
+Z_obs <- as.numeric(Z_true) + rnorm(I*J, 0, noise_sigma)
+Z_obs_mat <- matrix(Z_obs, I, J)
+w <- matrix(1, I, J)
+
+# Fit additive model
+fit_add <- additive_ordered_fit(Z_obs_mat, w, direction = "decreasing",
+                                osqp_pars = list(eps_abs = 1e-8, eps_rel = 1e-8))
+theta_add <- fit_add$theta
+
+cat("Additive model fitted\n")
+cat("Alpha:", round(fit_add$alpha, 4), "\n")
+```
+
+## Step 2: Compute Residuals
+
+```{r step2-residuals}
+residuals <- Z_obs_mat - theta_add
+
+cat("Residual statistics:\n")
+cat("  Mean:", round(mean(residuals), 4), "(should be ~0)\n")
+cat("  SD:", round(sd(residuals), 4), "\n")
+cat("  Range:", round(range(residuals), 3), "\n")
+```
+
+## Step 2b: Choose the interaction summary to test
+
+We can test **any global summary** of the interaction surface. In this report we will compare several options, but we will use one choice consistently for the “mainline” bootstrap demonstration.
+
+Based on the multi-statistic results below, we will treat **interaction energy** as the default:
+\[
+S^2 \;=\; \sum_{i,j} w_{ij}\,\delta_{ij}^2.
+\]
+Intuitively, \(S^2\) measures how much “non-additive surface” is present overall, without being overly sensitive to a single extreme cell (like max‑synergy) and without depending on an arbitrary threshold (like area‑synergy).
+
+**Important:** \(S^2\) is intentionally **two-sided**: it tells us whether there is *any interaction* (departure from monotone additivity), but it does not encode whether the interaction is “synergy” or “antagonism”. Direction lives in the **sign pattern** of \(\delta\), which we summarize with directional masses \(S_-\) and \(S_+\) and a signed *synergy index*.
+
+In fact, because both \(\hat\theta^{\text{iso}}\) and \(\hat\theta^{\text{add}}\) are translation-invariant least-squares projections, they preserve the weighted mean of \(Z\). This implies \(\sum w_{ij}\delta_{ij}=0\), which forces the total positive and negative *masses* \(\sum w\max(\delta,0)\) and \(\sum w\max(-\delta,0)\) to be equal. So an \(L^1\) mass cannot encode global direction.
+
+To get a meaningful signed direction summary we instead compare **directional energies**:
+\[
+S^2_{-}=\sum w_{ij}\max(-\delta_{ij},0)^2,\qquad
+S^2_{+}=\sum w_{ij}\max(\delta_{ij},0)^2,
+\]
+and report a signed index based on \(S^2_-\) vs \(S^2_+\) (see `experiments/00-interaction-definition.md`).
+
+## A practical note on calibration (why our null p-values looked wrong)
+
+In small grids (e.g., \(8\times 8\)), raw \(S^2\) can be **scale-sensitive**: its magnitude depends directly on the (unknown) noise variance. A subtle issue is that if we bootstrap using *raw fitted residuals* \(r_{ij}=Z_{ij}-\hat\theta^{\text{add}}_{ij}\), those residuals can be **too small** because the null fit has already absorbed part of the random variation.
+
+A practical fix (used throughout the simulation reports) is a simple **degrees-of-freedom (df) rescaling**:
+\[
+\tilde r_{ij} \;=\; r_{ij}\cdot\sqrt{\frac{n_{\text{eff}}}{n_{\text{eff}}-df_{\text{null}}}},
+\]
+which inflates residuals slightly so that bootstrap pseudo-data have the right noise scale under the null. We use the stable rule of thumb \(df_{\text{null}}=I+J-3\) for toy grids and validate calibration empirically.
+
+If you want a scale-normalized statistic instead, we also provide the studentized version \(S^2_{\text{norm}}=S^2/\mathrm{SSE}_{\text{add}}\), but in the rest of this report we will default to **raw \(S^2\) + df-rescaled residuals**.
+
+```{r choose-stat}
+# For viability with decreasing response, synergy is negative delta.
+synergy_sign <- "negative"
+threshold <- 0.0
+
+# Choose the statistic to test
+stat_choice <- "S2"
+# Options: "t_int", "S2", "S2_norm", "S2_minus", "S2_plus", "max_synergy",
+#          "area_synergy", "area_synergy_weighted"
+
+boot_residual_scale <- "df"
+# If NULL, wild_bootstrap() will estimate df from the fitted additive runs (Ku + Kv - 1).
+boot_df_null <- NULL
+
+cat("Selected statistic:", stat_choice, "\n")
+cat("Synergy sign:", synergy_sign, "\n")
+cat("Bootstrap residual_scale:", boot_residual_scale, "\n")
+cat("Bootstrap df_null:", boot_df_null, "\n")
+```
+
+**Interpretation:** From this point onward, the “single-dataset” example uses `stat_choice = "S2"` (interaction energy) with df-rescaled residuals in the bootstrap. Later in this report we will (a) compare multiple choices on the same dataset, and (b) check calibration across repeated null draws.
+
+## Step 3: Compute Original Test Statistic
+
+```{r step3-original-stat}
+# Fit isotonic model
+fit_iso <- isotonic_2d_fit(Z_obs_mat, w, direction = "decreasing",
+                           osqp_pars = list(eps_abs = 1e-8, eps_rel = 1e-8))
+theta_iso <- fit_iso$theta
+
+# Compute SSE
+sse_add <- sum(w * (Z_obs_mat - theta_add)^2)
+sse_iso <- sum(w * (Z_obs_mat - theta_iso)^2)
+delta_obs <- theta_iso - theta_add
+t_obs <- interaction_stat(stat_choice, delta_obs, w, sse_add, sse_iso,
+                          synergy_sign = synergy_sign, threshold = threshold)
+summ_obs <- interaction_summaries(delta_obs, w, synergy_sign = synergy_sign, threshold = threshold)
+
+cat("Original test statistic:\n")
+cat("  SSE_add:", round(sse_add, 4), "\n")
+cat("  SSE_iso:", round(sse_iso, 4), "\n")
+cat("  stat:", round(t_obs, 4), "\n")
+cat("  S2_plus:", round(summ_obs$S2_plus, 4), "\n")
+cat("  S2_minus:", round(summ_obs$S2_minus, 4), "\n")
+cat("  synergy_index:", round(summ_obs$synergy_index, 3), "\n")
+```
+
+**Interpretation:** This is the observed statistic for this single null dataset (here: `r stat_choice`). We still print `SSE_add` and `SSE_iso` as diagnostics because they help explain why `t_int` (the SSE gap) can behave differently from \(\delta\)-based summaries. Next we generate the bootstrap null distribution for this same statistic.
+
+## Step 4: Generate Bootstrap Samples
+
+```{r step4-bootstrap}
+B <- 1000  # Number of bootstrap samples (use more in practice)
+t_star <- numeric(B)
+
+residuals_boot <- residuals
+if (boot_residual_scale == "df") {
+  n_eff <- sum(is.finite(as.numeric(w)) & (as.numeric(w) > 0))
+  n_distinct_runs <- function(x, tol = 1e-8) {
+    if (length(x) == 0) return(0L)
+    1L + sum(abs(diff(x)) > tol)
+  }
+  df_null_eff <- boot_df_null
+  if (is.null(df_null_eff)) {
+    df_null_eff <- n_distinct_runs(fit_add$u) + n_distinct_runs(fit_add$v) - 1L
+  }
+  df_null_eff <- max(0, min(df_null_eff, n_eff - 1))
+  residuals_boot <- residuals * sqrt(n_eff / max(1, n_eff - df_null_eff))
+}
+
+set.seed(params$seed)
+for (b in 1:B) {
+  # Generate Rademacher multipliers
+  xi <- matrix(sample(c(-1, 1), I*J, replace = TRUE), I, J)
+
+  # Create bootstrap data
+  Z_star <- theta_add + xi * residuals_boot
+
+  # Fit both models to bootstrap data
+  fit_iso_star <- isotonic_2d_fit(Z_star, w, direction = "decreasing",
+                                  osqp_pars = list(eps_abs = 1e-8, eps_rel = 1e-8))
+  fit_add_star <- additive_ordered_fit(Z_star, w, direction = "decreasing",
+                                       osqp_pars = list(eps_abs = 1e-8, eps_rel = 1e-8))
+
+  # Compute bootstrap test statistic
+  sse_add_star <- sum(w * (Z_star - fit_add_star$theta)^2)
+  sse_iso_star <- sum(w * (Z_star - fit_iso_star$theta)^2)
+  delta_star <- fit_iso_star$theta - fit_add_star$theta
+  t_star[b] <- interaction_stat(stat_choice, delta_star, w, sse_add_star, sse_iso_star,
+                                synergy_sign = synergy_sign, threshold = threshold)
+}
+
+cat("Bootstrap complete\n")
+cat("Bootstrap t* range:", round(range(t_star), 4), "\n")
+cat("Bootstrap t* mean:", round(mean(t_star), 4), "\n")
+```
+
+**Interpretation:** This vector `t_star` is the empirical null distribution of our statistic for this dataset. Next we convert it to a p-value and visualize it.
+
+## Step 5: Compute P-value
+
+The p-value is the proportion of bootstrap statistics $\geq$ the observed statistic.
+
+```{r step5-pvalue}
+# P-value with continuity correction
+p_value <- (1 + sum(t_star >= t_obs)) / (B + 1)
+
+cat("P-value:", round(p_value, 4), "\n")
+cat("Single-draw p-values can vary; calibration is assessed across many null draws.\n")
+```
+
+## Visualize the Null Distribution
+
+```{r visualize-null-dist, fig.height=4}
+df_boot <- data.frame(t_star = t_star)
+
+ggplot(df_boot, aes(x = t_star)) +
+  geom_histogram(bins = 30, fill = "steelblue", alpha = 0.7) +
+  geom_vline(xintercept = t_obs, color = "red", linewidth = 1.2, linetype = "dashed") +
+  annotate("text", x = t_obs, y = Inf, label = paste0("Observed t = ", round(t_obs, 3)),
+           vjust = 2, hjust = -0.1, color = "red") +
+  labs(x = "Bootstrap test statistic (t*)", y = "Count",
+       title = "Null Distribution of Test Statistic",
+       subtitle = paste0("P-value = ", round(p_value, 3), " (", B, " bootstrap samples)")) +
+  theme_minimal(base_size = 11)
+```
+
+**Interpretation:** This single null draw provides a *sanity check*, but it is not proof of calibration. In a proper calibration study, the distribution of p‑values across many null datasets should be approximately uniform.
+
+# (A) Comparing Multiple Statistics on the Same Dataset
+
+Different global summaries answer different scientific questions. To make this concrete, we compute **several** statistics on the *same* null dataset and compare their bootstrap null distributions and p-values.
+
+```{r stat-comparison-setup}
+stats_to_compare <- c("t_int", "S2", "S2_norm", "S2_minus", "S2_plus",
+                      "max_synergy", "area_synergy", "area_synergy_weighted")
+
+# Use a smaller B for multi-stat comparison to keep this report fast.
+B_compare <- 300
+
+cat("Comparing", length(stats_to_compare), "statistics with B =", B_compare, "\n")
+```
+
+```{r stat-comparison-run, cache=TRUE, cache.extra=list(B_compare, stats_to_compare, noise_sigma, params$seed, stat_choice, boot_residual_scale, boot_df_null, sum(Z_obs_mat))}
+run_one_stat <- function(stat) {
+  boot <- wild_bootstrap(
+    barZ = Z_obs_mat,
+    w = w,
+    direction = "decreasing",
+    B = B_compare,
+    seed = params$seed,
+    osqp_pars = list(eps_abs = 1e-8, eps_rel = 1e-8),
+    n_cores = 1,
+    use_parallel = FALSE,
+    stat = stat,
+    synergy_sign = synergy_sign,
+    threshold = threshold,
+    residual_scale = boot_residual_scale,
+    df_null = boot_df_null
+  )
+  list(stat = stat, t0 = boot$t0, p_value = boot$p_value, t_star = boot$t_star)
+}
+
+comp_list <- lapply(stats_to_compare, run_one_stat)
+comp_tbl <- rbindlist(lapply(comp_list, function(x) data.table(
+  stat = x$stat,
+  t0 = x$t0,
+  p_value = x$p_value
+)))
+
+comp_tbl <- comp_tbl[order(p_value)]
+
+knitr::kable(
+  comp_tbl,
+  digits = 4,
+  caption = "Same null dataset: bootstrap p-values for different statistics (sorted by p-value)"
+)
+```
+
+**Interpretation:** Under the null, these p-values are all valid *in expectation* across repeated datasets, but they need not agree on any single dataset. Differences are expected because each statistic reacts differently to random fluctuations in the fitted interaction surface.
+
+```{r stat-comparison-plot, fig.height=7}
+df_comp <- rbindlist(lapply(comp_list, function(x) {
+  data.table(stat = x$stat, t_star = x$t_star, t0 = x$t0)
+}))
+
+stat_labels <- comp_tbl[, setNames(sprintf("%s\np=%.3f", stat, p_value), stat)]
+df_comp[, stat_label := stat_labels[stat]]
+df_comp[, stat_label := factor(stat_label, levels = stat_labels[comp_tbl$stat])]
+
+ggplot(df_comp, aes(x = t_star)) +
+  geom_histogram(bins = 30, fill = "steelblue", alpha = 0.75) +
+  geom_vline(aes(xintercept = t0), color = "red", linewidth = 1, linetype = "dashed") +
+  facet_wrap(~ stat_label, scales = "free_x", ncol = 3) +
+  labs(
+    x = "Bootstrap statistic (t*)",
+    y = "Count",
+    title = "Same Null Dataset: Bootstrap Distributions by Statistic",
+    subtitle = "Red dashed line = observed statistic"
+  ) +
+  theme_minimal(base_size = 11)
+```
+
+**Interpretation:** Some statistics (e.g., `max_synergy`) are sensitive to a single extreme cell, while others (e.g., `S2`) aggregate information across the surface. This is why we treat `stat_choice` as a scientific design choice, not just a technical one.
+
+For this specific null dataset/run (with `B_compare = r B_compare`, so the smallest possible nonzero p-value is about `r round(1/(B_compare+1), 3)`):
+
+- `t_int` p-value = `r sprintf('%.3f', comp_tbl[stat == 't_int']$p_value)`
+- `S2` p-value = `r sprintf('%.3f', comp_tbl[stat == 'S2']$p_value)`
+- `S2_norm` p-value = `r sprintf('%.3f', comp_tbl[stat == 'S2_norm']$p_value)`
+- `S2_minus` p-value = `r sprintf('%.3f', comp_tbl[stat == 'S2_minus']$p_value)` (energy in negative δ)
+- `S2_plus` p-value = `r sprintf('%.3f', comp_tbl[stat == 'S2_plus']$p_value)` (energy in positive δ)
+- `max_synergy` p-value = `r sprintf('%.3f', comp_tbl[stat == 'max_synergy']$p_value)`
+- `area_synergy` p-value = `r sprintf('%.3f', comp_tbl[stat == 'area_synergy']$p_value)`
+- `area_synergy_weighted` p-value = `r sprintf('%.3f', comp_tbl[stat == 'area_synergy_weighted']$p_value)`
+
+In our runs, we typically see the following pattern:
+
+- `t_int` (SSE gap) can look “significant” even under the null because the isotonic fit is a very flexible shape-constrained smoother; it can absorb random noise better than the additive fit even when the truth is additive.
+- `max_synergy` is an extreme-value summary: it has high variance and is easily driven by one noisy cell, so it can be underpowered or unstable.
+- `area_synergy` and `area_synergy_weighted` depend heavily on the chosen threshold; with `threshold = 0`, small random sign changes in \(\delta\) can dominate, making these less diagnostic in small grids.
+- `S2` aligns best with the scientific “interaction surface energy” story, but can be miscalibrated in small samples because it scales directly with noise variance.
+- `S2_norm` keeps the same story while stabilizing the null distribution by dividing by `SSE_add`; it can be useful, but in this report we default to `S2` paired with df-rescaled residuals.
+- `S2_minus`/`S2_plus` split energy by sign and can help describe whether the interaction is more “dip-like” (negative) or “bump-like” (positive), even though the overall mean of \(\delta\) is constrained to be zero.
+
+# Testing Under the Alternative
+
+Now let's see what happens when there IS interaction.
+
+```{r alternative-data}
+# Model-consistent alternative
+interaction_strength <- 1.4
+
+set.seed(params$seed + 201)
+surfaces_alt <- simulate_true_surfaces(
+  I = I, J = J,
+  interaction_strength = interaction_strength,
+  response_mode = "viability",
+  interaction_mode = "projected",
+  interaction_sign = "auto"
+)
+
+Z_true_alt <- surfaces_alt$theta_iso_true
+set.seed(params$seed + 202)
+Z_obs_alt <- as.numeric(Z_true_alt) + rnorm(I*J, 0, noise_sigma)
+Z_obs_alt_mat <- matrix(Z_obs_alt, I, J)
+
+cat("Data generated with interaction strength:", interaction_strength, "\n")
+cat("Max |Delta_true|:", round(max(abs(surfaces_alt$delta_true)), 4), "\n")
+```
+
+**Interpretation:** We now have an alternative dataset with a model-consistent interaction surface. Next we compute the observed statistic on this dataset.
+
+```{r alternative-test}
+# Fit models to alternative data
+fit_add_alt <- additive_ordered_fit(Z_obs_alt_mat, w, direction = "decreasing",
+                                    osqp_pars = list(eps_abs = 1e-8, eps_rel = 1e-8))
+fit_iso_alt <- isotonic_2d_fit(Z_obs_alt_mat, w, direction = "decreasing",
+                               osqp_pars = list(eps_abs = 1e-8, eps_rel = 1e-8))
+
+theta_add_alt <- fit_add_alt$theta
+theta_iso_alt <- fit_iso_alt$theta
+
+# Original test statistic
+sse_add_alt <- sum(w * (Z_obs_alt_mat - theta_add_alt)^2)
+sse_iso_alt <- sum(w * (Z_obs_alt_mat - theta_iso_alt)^2)
+delta_alt <- theta_iso_alt - theta_add_alt
+t_obs_alt <- interaction_stat(stat_choice, delta_alt, w, sse_add_alt, sse_iso_alt,
+                              synergy_sign = synergy_sign, threshold = threshold)
+summ_alt <- interaction_summaries(delta_alt, w, synergy_sign = synergy_sign, threshold = threshold)
+
+cat("Test statistic under alternative:", round(t_obs_alt, 4), "\n")
+cat("Compare to null:", round(t_obs, 4), "\n")
+cat("Ratio:", round(t_obs_alt / t_obs, 1), "x larger\n")
+cat("Synergy index:", round(summ_alt$synergy_index, 3), "\n")
+```
+
+**Interpretation:** This gives the observed statistic under the alternative. The next step is to build its bootstrap null distribution for a p-value.
+
+```{r alternative-bootstrap}
+# Bootstrap under alternative
+residuals_alt <- Z_obs_alt_mat - theta_add_alt
+t_star_alt <- numeric(B)
+
+residuals_alt_boot <- residuals_alt
+if (boot_residual_scale == "df") {
+  n_eff <- sum(is.finite(as.numeric(w)) & (as.numeric(w) > 0))
+  n_distinct_runs <- function(x, tol = 1e-8) {
+    if (length(x) == 0) return(0L)
+    1L + sum(abs(diff(x)) > tol)
+  }
+  df_null_eff <- boot_df_null
+  if (is.null(df_null_eff)) {
+    df_null_eff <- n_distinct_runs(fit_add_alt$u) + n_distinct_runs(fit_add_alt$v) - 1L
+  }
+  df_null_eff <- max(0, min(df_null_eff, n_eff - 1))
+  residuals_alt_boot <- residuals_alt * sqrt(n_eff / max(1, n_eff - df_null_eff))
+}
+
+set.seed(params$seed)
+for (b in 1:B) {
+  xi <- matrix(sample(c(-1, 1), I*J, replace = TRUE), I, J)
+  Z_star <- theta_add_alt + xi * residuals_alt_boot
+
+  fit_iso_star <- isotonic_2d_fit(Z_star, w, direction = "decreasing",
+                                  osqp_pars = list(eps_abs = 1e-8, eps_rel = 1e-8))
+  fit_add_star <- additive_ordered_fit(Z_star, w, direction = "decreasing",
+                                       osqp_pars = list(eps_abs = 1e-8, eps_rel = 1e-8))
+
+  sse_add_star <- sum(w * (Z_star - fit_add_star$theta)^2)
+  sse_iso_star <- sum(w * (Z_star - fit_iso_star$theta)^2)
+  delta_star <- fit_iso_star$theta - fit_add_star$theta
+  t_star_alt[b] <- interaction_stat(stat_choice, delta_star, w, sse_add_star, sse_iso_star,
+                                    synergy_sign = synergy_sign, threshold = threshold)
+}
+
+p_value_alt <- (1 + sum(t_star_alt >= t_obs_alt)) / (B + 1)
+cat("P-value under alternative:", round(p_value_alt, 4), "\n")
+```
+
+**Interpretation:** We now have a bootstrap p-value for the alternative dataset. The histogram below shows where the observed statistic falls relative to the null distribution.
+
+```{r visualize-alternative, fig.height=4}
+df_boot_alt <- data.frame(t_star = t_star_alt)
+
+ggplot(df_boot_alt, aes(x = t_star)) +
+  geom_histogram(bins = 30, fill = "steelblue", alpha = 0.7) +
+  geom_vline(xintercept = t_obs_alt, color = "red", linewidth = 1.2, linetype = "dashed") +
+  annotate("text", x = t_obs_alt, y = Inf, label = paste0("Observed t = ", round(t_obs_alt, 3)),
+           vjust = 2, hjust = 1.1, color = "red") +
+  labs(x = "Bootstrap test statistic (t*)", y = "Count",
+       title = "Null Distribution vs Observed (Alternative Data)",
+       subtitle = paste0(
+         "P-value = ", round(p_value_alt, 4),
+         ifelse(is.finite(p_value_alt) && p_value_alt < 0.05, " (reject H0 at 0.05)", "")
+       )) +
+  theme_minimal(base_size = 11)
+```
+
+**Interpretation:** Under the alternative, we *expect* the observed statistic to fall in the tail of the bootstrap null distribution. If it does, the p‑value will be small and we reject the null for this dataset. If it does not, the interaction signal may be too weak relative to noise.
+
+# (A2) Comparing Multiple Statistics on the Same Alternative Dataset
+
+Just like under the null, different statistics can behave differently on any *single* dataset. To see which summaries are most sensitive to the interaction pattern we simulated, we repeat the multi‑statistic comparison on the **alternative** dataset.
+
+```{r stat-comparison-alt-run, cache=TRUE, cache.extra=list(B_compare, stats_to_compare, noise_sigma, interaction_strength, params$seed, stat_choice, boot_residual_scale, boot_df_null, sum(Z_obs_alt_mat))}
+run_one_stat_alt <- function(stat) {
+  boot <- wild_bootstrap(
+    barZ = Z_obs_alt_mat,
+    w = w,
+    direction = "decreasing",
+    B = B_compare,
+    seed = params$seed + 5000,
+    osqp_pars = list(eps_abs = 1e-8, eps_rel = 1e-8),
+    n_cores = 1,
+    use_parallel = FALSE,
+    stat = stat,
+    synergy_sign = synergy_sign,
+    threshold = threshold,
+    residual_scale = boot_residual_scale,
+    df_null = boot_df_null
+  )
+  list(stat = stat, t0 = boot$t0, p_value = boot$p_value, t_star = boot$t_star)
+}
+
+comp_list_alt <- lapply(stats_to_compare, run_one_stat_alt)
+comp_tbl_alt <- rbindlist(lapply(comp_list_alt, function(x) data.table(
+  stat = x$stat,
+  t0 = x$t0,
+  p_value = x$p_value
+)))
+
+comp_tbl_alt <- comp_tbl_alt[order(p_value)]
+
+knitr::kable(
+  comp_tbl_alt,
+  digits = 4,
+  caption = "Same alternative dataset: bootstrap p-values for different statistics (sorted by p-value)"
+)
+```
+
+**Interpretation:** Under a real interaction, it is common to see stronger tail behavior for statistics that align with the interaction’s *shape* (e.g., aggregating negative mass for a viability “dip”), while max‑type summaries can be either very sensitive or very noisy depending on whether the interaction is localized.
+
+```{r stat-comparison-alt-plot, fig.height=7}
+df_comp_alt <- rbindlist(lapply(comp_list_alt, function(x) {
+  data.table(stat = x$stat, t_star = x$t_star, t0 = x$t0)
+}))
+
+stat_labels_alt <- comp_tbl_alt[, setNames(sprintf("%s\np=%.3f", stat, p_value), stat)]
+df_comp_alt[, stat_label := stat_labels_alt[stat]]
+df_comp_alt[, stat_label := factor(stat_label, levels = stat_labels_alt[comp_tbl_alt$stat])]
+
+ggplot(df_comp_alt, aes(x = t_star)) +
+  geom_histogram(bins = 30, fill = "steelblue", alpha = 0.75) +
+  geom_vline(aes(xintercept = t0), color = "red", linewidth = 1, linetype = "dashed") +
+  facet_wrap(~ stat_label, scales = "free_x", ncol = 3) +
+  labs(
+    x = "Bootstrap statistic (t*)",
+    y = "Count",
+    title = "Same Alternative Dataset: Bootstrap Distributions by Statistic",
+    subtitle = "Red dashed line = observed statistic"
+  ) +
+  theme_minimal(base_size = 11)
+```
+
+**Interpretation:** On this alternative dataset, the p-values show which summaries are actually “seeing” the interaction signal under our chosen simulation geometry and noise level:
+
+- `t_int` p-value = `r sprintf('%.3f', comp_tbl_alt[stat == 't_int']$p_value)` (often too eager under the null; not our default)
+- `S2` p-value = `r sprintf('%.3f', comp_tbl_alt[stat == 'S2']$p_value)` (raw energy; scale-sensitive)
+- `S2_norm` p-value = `r sprintf('%.3f', comp_tbl_alt[stat == 'S2_norm']$p_value)` (studentized alternative; useful to compare)
+- `S2_minus` p-value = `r sprintf('%.3f', comp_tbl_alt[stat == 'S2_minus']$p_value)` (energy in negative δ)
+- `S2_plus` p-value = `r sprintf('%.3f', comp_tbl_alt[stat == 'S2_plus']$p_value)` (energy in positive δ)
+- `max_synergy` p-value = `r sprintf('%.3f', comp_tbl_alt[stat == 'max_synergy']$p_value)` (may miss diffuse interactions)
+- `area_synergy` p-value = `r sprintf('%.3f', comp_tbl_alt[stat == 'area_synergy']$p_value)` (thresholded/discrete; can be underpowered unless the effect clears the threshold broadly)
+
+# Using the Pipeline Function
+
+Our `wild_bootstrap()` function implements all of this.
+
+```{r pipeline-bootstrap}
+# Use the pipeline's wild_bootstrap function
+boot_result <- wild_bootstrap(
+  barZ = Z_obs_alt_mat,
+  w = w,
+  direction = "decreasing",
+  B = 1000,
+  seed = params$seed,
+  osqp_pars = list(eps_abs = 1e-8, eps_rel = 1e-8),
+  n_cores = 1,
+  use_parallel = FALSE,
+  stat = stat_choice,
+  synergy_sign = synergy_sign,
+  threshold = threshold,
+  residual_scale = boot_residual_scale,
+  df_null = boot_df_null
+)
+
+cat("Pipeline wild_bootstrap results:\n")
+cat("  t0 (observed):", round(boot_result$t0, 4), "\n")
+cat("  p-value:", round(boot_result$p_value, 4), "\n")
+cat("  Bootstrap t* range:", round(range(boot_result$t_star, na.rm = TRUE), 4), "\n")
+```
+
+# Comparing Both Scenarios
+
+```{r comparison-plot, fig.height=5}
+df_compare <- rbind(
+  data.frame(scenario = "Null (no interaction)", t_star = t_star, t_obs = t_obs),
+  data.frame(scenario = "Alternative (with interaction)", t_star = t_star_alt, t_obs = t_obs_alt)
+)
+
+ggplot(df_compare, aes(x = t_star)) +
+  geom_histogram(bins = 25, fill = "steelblue", alpha = 0.7) +
+  geom_vline(aes(xintercept = t_obs), color = "red", linewidth = 1.2, linetype = "dashed") +
+  facet_wrap(~ scenario, scales = "free_x", ncol = 2) +
+  labs(x = paste0("Test statistic (", stat_choice, ")"), y = "Count",
+       title = paste0("Bootstrap Null Distributions (", stat_choice, "): Null vs Alternative"),
+       subtitle = "Red dashed line = observed test statistic") +
+  theme_minimal(base_size = 11)
+```
+
+**Key Observation (validated across many runs):**
+
+- With `S2`, under the null the observed statistic should typically land inside the bulk of the bootstrap distribution.
+- With `S2`, under the alternative it should more often fall in the tail, *but single datasets can overlap* depending on noise and effect size.
+
+This is exactly why we evaluate calibration and power across many simulations in the next report.
+
+# (B) Repeated Null Draws: Calibration Check (Null P-values)
+
+Even when the null is true, **some** datasets will produce small p-values by chance. The correct way to check calibration is to repeat the entire experiment many times under the null and look at the distribution of p-values.
+
+In an ideal world (large samples, “perfect” bootstrap), null p-values would look approximately **Uniform(0,1)**. In practice, with shape-constrained estimators and modest grid sizes, we can see **finite-sample conservatism** (too few small p-values) or **anti-conservatism** (too many small p-values), depending on the chosen statistic.
+
+Here we run a short multi-null check inside this report (the full version is in Report 05). The key sanity check is that under the null, p-values are not systematically tiny; if anything, we prefer mild conservatism at this stage.
+
+```{r multi-null-setup}
+n_null_draws <- 100
+B_multi <- 500
+
+cat("Running", n_null_draws, "independent null draws with B =", B_multi, "\n")
+cat("Statistic used:", stat_choice, "\n")
+```
+
+```{r multi-null-run, cache=TRUE, cache.extra=list(stat_choice, synergy_sign, threshold, boot_residual_scale, boot_df_null, n_null_draws, B_multi, noise_sigma, params$seed, sum(Z_true))}
+one_null_draw <- function(k) {
+  # Keep the *same* underlying null surface and only re-draw noise.
+  # This isolates Type I error calibration from variability in the baseline signal.
+  set.seed(params$seed + 2000 + k)
+  Z_obs_k <- matrix(as.numeric(Z_true) + rnorm(I * J, 0, noise_sigma), I, J)
+
+  boot_k <- wild_bootstrap(
+    barZ = Z_obs_k,
+    w = w,
+    direction = "decreasing",
+    B = B_multi,
+    seed = params$seed + 1000 + k,
+    osqp_pars = list(eps_abs = 1e-8, eps_rel = 1e-8),
+    n_cores = 1,
+    use_parallel = FALSE,
+    stat = stat_choice,
+    synergy_sign = synergy_sign,
+    threshold = threshold,
+    residual_scale = boot_residual_scale,
+    df_null = boot_df_null
+  )
+  list(p_value = boot_k$p_value, t0 = boot_k$t0)
+}
+
+null_list <- lapply(seq_len(n_null_draws), one_null_draw)
+df_null <- rbindlist(lapply(seq_along(null_list), function(i) data.table(
+  draw = i,
+  p_value = null_list[[i]]$p_value,
+  t0 = null_list[[i]]$t0
+)))
+
+alpha_level <- 0.05
+cat("Empirical rejection rate at alpha=0.05:",
+    round(mean(df_null$p_value <= alpha_level), 3), "\n")
+```
+
+**Interpretation:** If the test is well-calibrated, the histogram should be roughly flat and the ECDF should track the diagonal. If the ECDF sits **below** the diagonal (fewer small p-values), the procedure is conservative; if it sits **above**, it is anti-conservative. With only `n_null_draws` draws and finite `B_multi`, some variation is expected.
+
+```{r multi-null-plots, fig.height=4}
+p_hist <- ggplot(df_null, aes(x = p_value)) +
+  geom_histogram(bins = 20, fill = "steelblue", alpha = 0.75, boundary = 0) +
+  geom_hline(yintercept = n_null_draws / 20, linetype = "dashed", color = "gray50") +
+  geom_vline(xintercept = 0.05, linetype = "dashed", color = "red") +
+  labs(
+    x = "P-value",
+    y = "Count",
+    title = "Null P-values Across Repeated Null Draws",
+    subtitle = "Uniform p-values look roughly flat; red line = 0.05"
+  ) +
+  theme_minimal(base_size = 11)
+
+df_ecdf <- data.table(p = sort(df_null$p_value))
+df_ecdf[, ecdf := seq_len(.N) / .N]
+
+alpha_dkw <- 0.05
+eps_dkw <- sqrt(log(2 / alpha_dkw) / (2 * n_null_draws))
+
+p_ecdf <- ggplot(df_ecdf, aes(x = p, y = ecdf)) +
+  geom_ribbon(aes(ymin = pmax(0, p - eps_dkw), ymax = pmin(1, p + eps_dkw)),
+              fill = "gray85", alpha = 0.6) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "gray40") +
+  geom_line(color = "steelblue", linewidth = 1) +
+  geom_point(color = "steelblue", size = 1.3) +
+  coord_equal(xlim = c(0, 1), ylim = c(0, 1)) +
+  labs(
+    x = "Theoretical quantile (Uniform)",
+    y = "Empirical quantile",
+    title = "Calibration Check: ECDF of Null P-values",
+    subtitle = paste0("Gray band = 95% DKW band; n = ", n_null_draws)
+  ) +
+  theme_minimal(base_size = 11)
+
+p_hist + p_ecdf + plot_layout(ncol = 2)
+```
+
+**Interpretation:** If the ECDF stays near the diagonal (within the band), the test is behaving like a calibrated level-\(\alpha\) test. Occasional small p-values under the null are expected; what matters is the *overall* distribution across repeated null draws.
+
+# Why Wild Bootstrap Works
+
+## Theoretical Justification
+
+The wild bootstrap is valid for testing because:
+
+1. **Under H0**: The additive model is correct, so residuals are "true" errors. Flipping signs generates new valid error realizations.
+
+2. **Heteroskedasticity-robust**: Each residual is multiplied by its own $\xi$, preserving the local variance structure.
+
+3. **No distributional assumptions**: Works regardless of whether errors are Gaussian, t-distributed, etc.
+
+## The Rademacher Multiplier
+
+We use $\xi \in \{-1, +1\}$ with equal probability because:
+
+- $E[\xi] = 0$ (unbiased)
+- $E[\xi^2] = 1$ (variance preserved)
+- Simple and fast to generate
+- Proven theoretical properties
+
+Other choices (e.g., two-point distributions matching skewness) exist but Rademacher is standard.
+
+# Summary and Next Steps
+
+## What We Learned
+
+1. **Wild bootstrap** generates null distribution by flipping residual signs
+2. The procedure: fit null → compute residuals → flip signs → refit → compute statistic
+3. **P-value** = proportion of bootstrap statistics \(\ge\) observed
+4. Under null, the observed statistic should look typical *on average across many null datasets*
+5. Under alternative, we expect a tail shift when the interaction signal is strong enough
+
+## Key Properties
+
+- Preserves heteroskedasticity (unlike standard bootstrap)
+- No distributional assumptions needed
+- Works with non-standard estimators (isotonic regression)
+- Computationally intensive but parallelizable
+
+## Correctness Check
+
+The `wild_bootstrap()` function appears correct:
+
+- Generates Rademacher multipliers
+- Creates bootstrap samples from additive fit + flipped residuals
+- Computes test statistics for each bootstrap sample
+- P-value formula includes continuity correction
+
+## Recommended Workflow (Decision Routine)
+
+At this point, the method naturally separates into **(i) detecting interaction** and **(ii) describing its direction and location**.
+
+### Why this is a two-step story
+
+- The global energy statistic \(S^2=\sum w\,\delta^2\) is **two-sided**: it answers “is there any deviation from monotone additivity?”, but does not encode whether the deviation is synergy‑like or antagonism‑like.
+- A purely “signed” global statistic based on the mean of \(\delta\) cannot work here because \(\sum w\,\delta=0\) (both fits preserve the weighted mean of \(Z\)).
+- Direction is therefore best summarized by **directional energies** \(S^2_-\) vs \(S^2_+\) and the local shape of \(\delta\).
+
+### Practical flowchart
+
+1. **Preprocess**
+   - Choose response mode (viability vs inhibition), transform \(g(\cdot)\), and monotone direction.
+   - Compute \(\bar Z\) and weights \(w\).
+
+2. **Fit null and alternative (shape-constrained projections)**
+   - Fit \(\hat\theta^{\text{add}}=\mathrm{Proj}_{\mathcal A}(\bar Z)\)
+   - Fit \(\hat\theta^{\text{iso}}=\mathrm{Proj}_{\mathcal M}(\bar Z)\)
+   - Compute interaction surface \(\hat\delta=\hat\theta^{\text{iso}}-\hat\theta^{\text{add}}\)
+
+3. **Primary test: “interaction exists”**
+   - Run wild bootstrap under the additive null using \(T = S^2\) (or \(S^2_{\text{norm}}\) if you prefer studentization).
+   - Report \(p_{\text{int}}\).
+
+4. **If \(p_{\text{int}} \le \alpha\): describe direction**
+   - Compute directional energies:
+     \[
+     S^2_{-}=\sum w\,\max(-\hat\delta,0)^2,\qquad
+     S^2_{+}=\sum w\,\max(\hat\delta,0)^2.
+     \]
+   - Report a signed “synergy index” \(I_{\text{syn}}\in[-1,1]\) based on \(S^2_-\) vs \(S^2_+\).
+   - Plot \(\hat\delta\) to localize where interaction occurs (this is often the scientifically most valuable output).
+
+5. **Optional: formal direction tests**
+   - If you need *inferential* statements about synergy vs antagonism, you can bootstrap:
+     - \(p_{-}\) using `stat = "S2_minus"` (synergy-direction energy for viability),
+     - \(p_{+}\) using `stat = "S2_plus"` (antagonism-direction energy),
+     and correct for testing both directions (e.g., Bonferroni).
+   - We generally treat \(I_{\text{syn}}\) as a descriptive summary rather than a primary test statistic because it is a ratio and can be noisy when total interaction is small.
+
+## Next Steps
+
+We've shown the bootstrap works on individual examples. But does it have correct **calibration** (Type I error rate) and good **power**? In the next report, we will:
+
+1. Run many simulations under the null to check Type I error
+2. Run simulations with varying interaction strength to measure power
+3. Create calibration plots (p-value ECDF under null)
+4. Create power curves
+
+See: `05-calibration-power.Rmd`
+
+# Session Info
+
+```{r session-info}
+sessionInfo()
+```
+
+**Interpretation:** Session details above document the computational environment for reproducibility.

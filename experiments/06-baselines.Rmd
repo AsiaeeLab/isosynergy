@@ -1,0 +1,844 @@
+---
+title: "06 — Comparison with Traditional Synergy Methods"
+author: "Amir Asiaee"
+date: '`r format(Sys.Date(), "%B %d, %Y")`'
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 3
+    number_sections: true
+    theme: yeti
+    highlight: kate
+    code_folding: show
+params:
+  seed: 42
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  warning = FALSE,
+  message = FALSE,
+  fig.width = 10,
+  fig.height = 6
+)
+
+knitr::opts_knit$set(root.dir = normalizePath(".."))
+```
+
+# Introduction
+
+Our shape-constrained approach uses:
+
+- **Null model**: Monotone-additive (no interaction)
+- **Alternative**: General monotone (allows interaction)
+- **Interaction summaries**: \(t_{\text{int}}\), \(S^2\), max/area synergy, signed mass
+
+But there are several traditional methods for detecting drug synergy. In this report, we compare our approach to four classical methods:
+
+1. **Bliss Independence**: Assumes multiplicative combination effects
+2. **HSA (Highest Single Agent)**: Uses max single-drug effect as reference
+3. **Loewe Additivity**: Based on dose equivalence principle
+4. **ZIP (Zero Interaction Potency)**: Combines curve fitting with Bliss-like combination
+
+We will:
+
+1. Explain each method mathematically
+2. Apply them to simulated data
+3. Compare their behavior under null and alternative
+4. Discuss advantages and limitations of each
+
+**Implementation note:** In this report we compute Bliss/HSA/Loewe/ZIP using the lightweight reference implementations in `R/baselines_*.R`. These are intentionally minimal (good for transparency and for controlled simulations), but they may differ in curve-fitting and edge-case handling from widely used toolkits such as *SynergyFinder*. If you want strict parity checks, add an optional SynergyFinder section later (we include an installation hint below).
+
+# Setup
+
+```{r load-packages}
+library(data.table)
+library(ggplot2)
+library(patchwork)
+
+source("R/pipeline.R")
+source("R/baselines_common.R")
+source("R/baselines_bliss.R")
+source("R/baselines_hsa.R")
+source("R/baselines_loewe.R")
+source("R/baselines_zip.R")
+source("R/baselines_synergyfinder.R")
+
+set.seed(params$seed)
+cat("Using seed:", params$seed, "\n")
+```
+
+**Interpretation:** Baseline and shape‑constrained utilities are loaded, and the seed is fixed for reproducibility.
+
+```{r synergyfinder-availability}
+has_synergyfinder <- synergyfinder_available()
+cat("SynergyFinder available:", has_synergyfinder, "\n")
+```
+
+**Interpretation:** If you want package‑level parity for Bliss/HSA/Loewe/ZIP, install the SynergyFinder R package into this `renv` project (example): `renv::install("hly89/synergyfinder")` and then re-knit. The rest of this report runs without it.
+
+# Analysis Options
+
+We set a consistent transform and interaction summary so the shape‑constrained method is directly comparable across scenarios.
+
+```{r analysis-options}
+response_mode <- "viability"
+direction <- "decreasing"
+analysis_transform <- make_transform(list(name = "logit", eps = 1e-6))
+synergy_sign <- infer_synergy_sign(response_mode, direction)
+threshold <- 0.0
+stat_choice <- "S2"
+
+boot_residual_scale <- "df"
+# Rule-of-thumb df under a monotone-additive null; see experiments/00-bootstrap-df-scaling.md
+boot_df_null <- NULL
+
+cat("Transform:", analysis_transform$name, "\n")
+cat("Statistic:", stat_choice, "\n")
+cat("Synergy sign:", synergy_sign, "\n")
+cat("Bootstrap residual_scale:", boot_residual_scale, "\n")
+```
+
+**Interpretation:** We analyze our method on the logit (Z) scale and use interaction energy (`S2`) as the default global interaction summary for testing. Note that `S2` is **two-sided** (interaction magnitude); synergy vs antagonism is encoded in the sign pattern of \(\delta\) and summarized below via the synergy index (based on directional energies \(S^2_-\) vs \(S^2_+\)). For bootstrap calibration, we use a mild df-based residual rescaling (`residual_scale = "df"`); see `experiments/00-bootstrap-df-scaling.md` for the mathematical rationale. You can switch `stat_choice` to compare different global notions of interaction (e.g., `S2_minus`, `max_synergy`, `S2_norm`).
+
+# The Four Classical Methods
+
+## Overview
+
+| Method | Null Model | Key Assumption | Output |
+|--------|------------|----------------|--------|
+| Bliss | Multiplicative | Independent probabilities | Synergy score matrix |
+| HSA | Max single-agent | Combination = best single drug | Synergy score matrix |
+| Loewe | Dose equivalence | Drugs are "dilutions" of each other | Combination Index |
+| ZIP | Bliss + curve fit | Smooth dose-response curves | Delta score matrix |
+
+## Bliss Independence
+
+### Mathematical Formulation
+
+Bliss independence assumes that drugs act independently at the probability level. If:
+
+- $V_A(d_A)$ = viability with drug A at dose $d_A$
+- $V_B(d_B)$ = viability with drug B at dose $d_B$
+
+Then the expected combination viability under Bliss is:
+$$E_{\text{Bliss}}(d_A, d_B) = V_A(d_A) \cdot V_B(d_B)$$
+
+Synergy score:
+$$S_{\text{Bliss}} = E_{\text{Bliss}} - V_{\text{obs}}$$
+
+Positive values indicate synergy (observed effect is stronger than expected).
+
+### Implementation
+
+```{r bliss-impl}
+# Our implementation extracts monotherapy curves from the edges
+# and computes the multiplicative expected value
+
+# Let's trace through a simple example
+cat("Bliss Independence:\n")
+cat("  E[i,j] = V_A[i] * V_B[j]\n")
+cat("  S[i,j] = E[i,j] - V_obs[i,j]\n")
+cat("  S > 0 → synergy (stronger than multiplicative)\n")
+cat("  S < 0 → antagonism (weaker than multiplicative)\n")
+```
+
+## HSA (Highest Single Agent)
+
+### Mathematical Formulation
+
+HSA assumes the combination effect should at least equal the best single-drug effect:
+$$E_{\text{HSA}}(d_A, d_B) = \min(V_A(d_A), V_B(d_B))$$
+
+(We use min because lower viability = stronger effect)
+
+Synergy score:
+$$S_{\text{HSA}} = E_{\text{HSA}} - V_{\text{obs}}$$
+
+### Implementation
+
+```{r hsa-impl}
+cat("HSA (Highest Single Agent):\n")
+cat("  E[i,j] = min(V_A[i], V_B[j])\n")
+cat("  S[i,j] = E[i,j] - V_obs[i,j]\n")
+cat("  S > 0 → synergy (better than best single drug)\n")
+cat("  S < 0 → antagonism (worse than best single drug)\n")
+```
+
+## Loewe Additivity
+
+### Mathematical Formulation
+
+Loewe is based on the concept of **dose equivalence**. If the observed effect at $(d_A, d_B)$ is $V_{\text{obs}}$, we can ask: what doses of each drug alone would give this effect?
+
+- $d_A^*$ = dose of A alone that gives $V_{\text{obs}}$
+- $d_B^*$ = dose of B alone that gives $V_{\text{obs}}$
+
+The **Combination Index**:
+$$CI = \frac{d_A}{d_A^*} + \frac{d_B}{d_B^*}$$
+
+- CI < 1: Synergy (need less of each drug than expected)
+- CI = 1: Additivity (Loewe's null model)
+- CI > 1: Antagonism (need more than expected)
+
+Synergy score: $S_{\text{Loewe}} = 1 - CI$
+
+### Implementation
+
+```{r loewe-impl}
+cat("Loewe Additivity:\n")
+cat("  For observed effect V_obs at (d_A, d_B):\n")
+cat("  - d_A* = dose of A alone giving V_obs\n")
+cat("  - d_B* = dose of B alone giving V_obs\n")
+cat("  CI = d_A/d_A* + d_B/d_B*\n")
+cat("  S = 1 - CI\n")
+cat("  S > 0 → synergy (CI < 1)\n")
+cat("  S < 0 → antagonism (CI > 1)\n")
+```
+
+## ZIP (Zero Interaction Potency)
+
+### Mathematical Formulation
+
+ZIP works in **inhibition** space (I = 1 - V) and uses curve fitting:
+
+1. Fit 4-parameter logistic (Hill) curves to monotherapy data
+2. Compute expected inhibition under Bliss:
+   $$E_{\text{ZIP}} = I_A(d_A) + I_B(d_B) - I_A(d_A) \cdot I_B(d_B)$$
+3. Delta score: $\delta = I_{\text{obs}} - E_{\text{ZIP}}$
+
+### Implementation
+
+```{r zip-impl}
+cat("ZIP (Zero Interaction Potency):\n")
+cat("  Works in inhibition space: I = 1 - V\n")
+cat("  Fits Hill curves to monotherapy\n")
+cat("  E_ZIP = I_A + I_B - I_A * I_B  (Bliss in inhibition)\n")
+cat("  delta = I_obs - E_ZIP\n")
+cat("  delta > 0 → synergy\n")
+cat("  delta < 0 → antagonism\n")
+```
+
+# Generating Test Data
+
+## Simulated Drug Combination Matrix
+
+We need to create data in the format expected by baseline methods (long format with dose columns).
+
+```{r generate-data}
+# Grid parameters
+I <- 8
+J <- 8
+dosesA <- c(0, 2^(0:6))  # 0, 1, 2, 4, 8, 16, 32, 64
+dosesB <- c(0, 3^(0:6))  # 0, 1, 3, 9, 27, 81, 243, 729
+
+# Adjust to I x J grid
+dosesA <- dosesA[1:I]
+dosesB <- dosesB[1:J]
+
+cat("Dose levels:\n")
+cat("  Drug A:", dosesA, "\n")
+cat("  Drug B:", dosesB, "\n")
+```
+
+## Creating the Simulation Function
+
+To keep the comparison consistent with our method, we generate data from a **monotone true surface** in the transformed scale, then map back to viability. This ensures the underlying interaction is defined in the same geometry we test.
+
+```{r sim-function}
+# We simulate in the transformed Z-scale, then map back to viability.
+trans <- analysis_transform
+
+simulate_combo_data <- function(dosesA, dosesB, interaction_strength = 0, noise_sigma = 0.05, seed = NULL) {
+  if (!is.null(seed)) set.seed(seed)
+
+  I <- length(dosesA)
+  J <- length(dosesB)
+
+  surfaces <- simulate_true_surfaces(
+    I = I, J = J,
+    interaction_strength = interaction_strength,
+    response_mode = "viability",
+    interaction_mode = "projected",
+    interaction_sign = "auto"
+  )
+
+  Z_add <- surfaces$theta_add_true
+  Z_true <- surfaces$theta_iso_true
+  delta_true <- surfaces$delta_true
+  Z_obs <- as.numeric(Z_true) + rnorm(I * J, 0, noise_sigma)
+
+  V_additive <- matrix(trans$inverse(as.numeric(Z_add)), I, J)
+  V_true <- matrix(trans$inverse(as.numeric(Z_true)), I, J)
+  V_obs <- matrix(trans$inverse(Z_obs), I, J)
+
+  V_additive <- matrix(clamp01(as.numeric(V_additive), eps = 0), I, J)
+  V_true <- matrix(clamp01(as.numeric(V_true), eps = 0), I, J)
+  V_obs <- matrix(clamp01(as.numeric(V_obs), eps = 0), I, J)
+
+  df_long <- expand.grid(doseA = dosesA, doseB = dosesB)
+  df_long$response <- as.numeric(t(V_obs))
+
+  list(
+    Z_add_true = Z_add,
+    Z_iso_true = Z_true,
+    delta_true = delta_true,
+    V_true = V_true,
+    V_obs = V_obs,
+    V_additive = V_additive,
+    df_long = df_long,
+    dosesA = dosesA,
+    dosesB = dosesB,
+    interaction_strength = interaction_strength
+  )
+}
+```
+
+## Generate Null and Alternative Data
+
+```{r generate-scenarios}
+# Null: no interaction
+data_null <- simulate_combo_data(dosesA, dosesB, interaction_strength = 0,
+                                  noise_sigma = 0.05, seed = params$seed)
+
+# Alternative: with interaction
+data_alt <- simulate_combo_data(dosesA, dosesB, interaction_strength = 2.0,
+                                 noise_sigma = 0.05, seed = params$seed + 1)
+
+cat("Generated data:\n")
+cat("  Null (no interaction): delta =", data_null$interaction_strength, "\n")
+cat("  Alternative (with interaction): delta =", data_alt$interaction_strength, "\n")
+cat("  True max|Δ| (null):", round(max(abs(data_null$delta_true)), 4), "\n")
+cat("  True max|Δ| (alt) :", round(max(abs(data_alt$delta_true)), 4), "\n")
+cat("  True mean(Δ^2) (null):", round(mean(data_null$delta_true^2), 6), "\n")
+cat("  True mean(Δ^2) (alt) :", round(mean(data_alt$delta_true^2), 6), "\n")
+```
+
+## Visualize the Data
+
+```{r visualize-data, fig.height=5}
+plot_matrix_heatmap <- function(mat, title, dosesA, dosesB) {
+  df <- expand.grid(i = 1:nrow(mat), j = 1:ncol(mat))
+  df$value <- as.numeric(mat)
+  df$doseA <- dosesA[df$i]
+  df$doseB <- dosesB[df$j]
+
+  ggplot(df, aes(x = factor(j), y = factor(i), fill = value)) +
+    geom_tile() +
+    scale_fill_gradient2(low = "darkred", mid = "white", high = "darkblue",
+                         midpoint = 0.5, limits = c(0, 1)) +
+    labs(x = "Drug B dose index", y = "Drug A dose index", fill = "Viability",
+         title = title) +
+    theme_minimal(base_size = 10) +
+    coord_equal()
+}
+
+p1 <- plot_matrix_heatmap(data_null$V_obs, "Null (no interaction)",
+                          data_null$dosesA, data_null$dosesB)
+p2 <- plot_matrix_heatmap(data_alt$V_obs, "Alternative (with interaction)",
+                          data_alt$dosesA, data_alt$dosesB)
+
+p1 + p2 + plot_layout(guides = "collect")
+```
+
+# Applying Baseline Methods
+
+## Apply All Methods to Both Scenarios
+
+```{r apply-baselines}
+apply_all_baselines <- function(data) {
+  df_long <- data$df_long
+  df_long$response_viability <- df_long$response
+  use_sf <- isTRUE(has_synergyfinder)
+
+  # Bliss
+  bliss <- if (use_sf) {
+    tryCatch(
+      synergyfinder_synergy(df_long, method = "Bliss", response_mode = "viability", correction = FALSE),
+      error = function(e) NULL
+    )
+  } else NULL
+  if (is.null(bliss)) {
+    bliss <- tryCatch(
+      bliss_synergy(df_long, response_mode = "viability"),
+      error = function(e) list(synergy = matrix(NA, nrow(data$V_obs), ncol(data$V_obs)))
+    )
+  }
+
+  # HSA
+  hsa <- if (use_sf) {
+    tryCatch(
+      synergyfinder_synergy(df_long, method = "HSA", response_mode = "viability", correction = FALSE),
+      error = function(e) NULL
+    )
+  } else NULL
+  if (is.null(hsa)) {
+    hsa <- tryCatch(
+      hsa_synergy(df_long, response_mode = "viability"),
+      error = function(e) list(synergy = matrix(NA, nrow(data$V_obs), ncol(data$V_obs)))
+    )
+  }
+
+  # Loewe
+  loewe <- if (use_sf) {
+    tryCatch(
+      synergyfinder_synergy(df_long, method = "Loewe", response_mode = "viability", correction = FALSE),
+      error = function(e) NULL
+    )
+  } else NULL
+  if (is.null(loewe)) {
+    loewe <- tryCatch(
+      loewe_synergy(df_long, response_mode = "viability", direction = "decreasing"),
+      error = function(e) list(synergy = matrix(NA, nrow(data$V_obs), ncol(data$V_obs)))
+    )
+  }
+
+  # ZIP
+  zip <- if (use_sf) {
+    tryCatch(
+      synergyfinder_synergy(df_long, method = "ZIP", response_mode = "viability", correction = FALSE),
+      error = function(e) NULL
+    )
+  } else NULL
+  if (is.null(zip)) {
+    zip <- tryCatch(
+      zip_synergy(df_long, response_mode = "viability", use_curvefit = TRUE),
+      error = function(e) list(synergy = matrix(NA, nrow(data$V_obs), ncol(data$V_obs)))
+    )
+  }
+
+  list(bliss = bliss, hsa = hsa, loewe = loewe, zip = zip)
+}
+
+results_null <- apply_all_baselines(data_null)
+results_alt <- apply_all_baselines(data_alt)
+
+cat("Baseline methods applied successfully\n")
+```
+
+**Interpretation:** By default we compute Bliss/HSA/Loewe/ZIP with our local reference implementations (`R/baselines_bliss.R`, `R/baselines_hsa.R`, `R/baselines_loewe.R`, `R/baselines_zip.R`). If SynergyFinder is installed, we automatically use it (and fall back to our local implementation if SynergyFinder errors). This gives a lightweight “parity switch” without changing downstream code.
+
+## Visualize Synergy Scores
+
+```{r visualize-synergy, fig.height=10}
+plot_synergy <- function(mat, title, symmetric_scale = TRUE) {
+  df <- expand.grid(i = 1:nrow(mat), j = 1:ncol(mat))
+  df$value <- as.numeric(mat)
+
+  max_abs <- max(abs(df$value), na.rm = TRUE)
+  if (symmetric_scale && is.finite(max_abs) && max_abs > 0) {
+    limits <- c(-max_abs, max_abs)
+  } else {
+    limits <- range(df$value, na.rm = TRUE)
+  }
+
+  ggplot(df, aes(x = factor(j), y = factor(i), fill = value)) +
+    geom_tile() +
+    scale_fill_gradient2(low = "blue", mid = "white", high = "red",
+                         midpoint = 0, limits = limits, na.value = "gray80") +
+    labs(x = "Drug B", y = "Drug A", fill = "Synergy",
+         title = title) +
+    theme_minimal(base_size = 9) +
+    coord_equal() +
+    theme(axis.text = element_text(size = 7))
+}
+
+# Null scenario
+p_bliss_null <- plot_synergy(results_null$bliss$synergy, "Bliss (Null)")
+p_hsa_null <- plot_synergy(results_null$hsa$synergy, "HSA (Null)")
+p_loewe_null <- plot_synergy(results_null$loewe$synergy, "Loewe (Null)")
+p_zip_null <- plot_synergy(results_null$zip$synergy, "ZIP (Null)")
+
+# Alternative scenario
+p_bliss_alt <- plot_synergy(results_alt$bliss$synergy, "Bliss (Alternative)")
+p_hsa_alt <- plot_synergy(results_alt$hsa$synergy, "HSA (Alternative)")
+p_loewe_alt <- plot_synergy(results_alt$loewe$synergy, "Loewe (Alternative)")
+p_zip_alt <- plot_synergy(results_alt$zip$synergy, "ZIP (Alternative)")
+
+(p_bliss_null + p_hsa_null + p_loewe_null + p_zip_null) /
+(p_bliss_alt + p_hsa_alt + p_loewe_alt + p_zip_alt) +
+  plot_annotation(title = "Synergy Scores: Null (top) vs Alternative (bottom)")
+```
+
+**Interpretation:**
+
+- **Gray cells in Loewe** are `NA`s: the Loewe inversion step can become ill-posed when the combination response falls outside the monotherapy range or when edge curves are too flat/noisy to invert reliably.
+- Even under our **null**, baseline synergy scores can be non-zero because each baseline encodes a *different* definition of “no interaction” (e.g., Bliss is multiplicative in viability, while our null is additive in logit(Z)).
+- Under the **alternative**, some methods may respond strongly (if their null aligns with the interaction shape), while others may be noisy or miss diffuse interactions.
+
+## Summary Statistics
+
+```{r summary-stats}
+summarize_synergy <- function(synergy_mat, name) {
+  vals <- as.numeric(synergy_mat)
+  vals <- vals[is.finite(vals)]
+  data.frame(
+    method = name,
+    mean = mean(vals),
+    sd = sd(vals),
+    max = max(vals),
+    min = min(vals),
+    pct_positive = mean(vals > 0) * 100
+  )
+}
+
+summary_null <- rbind(
+  summarize_synergy(results_null$bliss$synergy, "Bliss"),
+  summarize_synergy(results_null$hsa$synergy, "HSA"),
+  summarize_synergy(results_null$loewe$synergy, "Loewe"),
+  summarize_synergy(results_null$zip$synergy, "ZIP")
+)
+summary_null$scenario <- "Null"
+
+summary_alt <- rbind(
+  summarize_synergy(results_alt$bliss$synergy, "Bliss"),
+  summarize_synergy(results_alt$hsa$synergy, "HSA"),
+  summarize_synergy(results_alt$loewe$synergy, "Loewe"),
+  summarize_synergy(results_alt$zip$synergy, "ZIP")
+)
+summary_alt$scenario <- "Alternative"
+
+summary_all <- rbind(summary_null, summary_alt)
+knitr::kable(summary_all, digits = 3,
+             caption = "Summary of Synergy Scores by Method and Scenario")
+```
+
+**Interpretation:** If a method’s null model matches the data-generating process, its null scores should be centered near zero. Here we simulated under our method’s null (monotone-additive in logit(Z)), so baselines that assume different nulls can display apparent “synergy” even when our null is true.
+
+# Our Shape-Constrained Approach
+
+## Apply Isotonic Interaction Test
+
+We now apply our method on the **logit-transformed (Z) scale**, so additivity and monotonicity are defined in the same geometry as our model.
+
+```{r isotonic-approach}
+# Convert to transformed Z-scale for our approach
+Z_null <- matrix(analysis_transform$forward(as.numeric(data_null$V_obs)),
+                 nrow(data_null$V_obs), ncol(data_null$V_obs))
+Z_alt <- matrix(analysis_transform$forward(as.numeric(data_alt$V_obs)),
+                nrow(data_alt$V_obs), ncol(data_alt$V_obs))
+w <- matrix(1, nrow(Z_null), ncol(Z_null))
+
+# Fit models (note: viability is decreasing with dose)
+fit_iso_null <- isotonic_2d_fit(Z_null, w, direction = direction,
+                                 osqp_pars = list(eps_abs = 1e-8, eps_rel = 1e-8))
+fit_add_null <- additive_ordered_fit(Z_null, w, direction = direction,
+                                      osqp_pars = list(eps_abs = 1e-8, eps_rel = 1e-8))
+
+fit_iso_alt <- isotonic_2d_fit(Z_alt, w, direction = direction,
+                                osqp_pars = list(eps_abs = 1e-8, eps_rel = 1e-8))
+fit_add_alt <- additive_ordered_fit(Z_alt, w, direction = direction,
+                                     osqp_pars = list(eps_abs = 1e-8, eps_rel = 1e-8))
+
+# Compute chosen statistic
+t_null <- interaction_stat(stat_choice, fit_iso_null$theta - fit_add_null$theta, w,
+                           sum(w * (Z_null - fit_add_null$theta)^2),
+                           sum(w * (Z_null - fit_iso_null$theta)^2),
+                           synergy_sign = synergy_sign, threshold = threshold)
+t_alt <- interaction_stat(stat_choice, fit_iso_alt$theta - fit_add_alt$theta, w,
+                          sum(w * (Z_alt - fit_add_alt$theta)^2),
+                          sum(w * (Z_alt - fit_iso_alt$theta)^2),
+                          synergy_sign = synergy_sign, threshold = threshold)
+
+cat("Shape-constrained statistic:\n")
+cat("  Stat:", stat_choice, "\n")
+cat("  Null data:", round(t_null, 4), "\n")
+cat("  Alternative data:", round(t_alt, 4), "\n")
+cat("  Ratio:", round(t_alt / t_null, 1), "x\n")
+
+cat("\nNormalized effect sizes (easier to interpret across grids):\n")
+cat("  mean(delta^2) null:", round(t_null / sum(w), 4), "\n")
+cat("  mean(delta^2) alt :", round(t_alt / sum(w), 4), "\n")
+cat("  max|delta| null  :", round(max(abs(fit_iso_null$theta - fit_add_null$theta)), 4), "\n")
+cat("  max|delta| alt   :", round(max(abs(fit_iso_alt$theta - fit_add_alt$theta)), 4), "\n")
+
+# Show multiple summaries for context
+summ_null <- interaction_summaries(fit_iso_null$theta - fit_add_null$theta, w,
+                                   synergy_sign = synergy_sign, threshold = threshold)
+summ_alt <- interaction_summaries(fit_iso_alt$theta - fit_add_alt$theta, w,
+                                  synergy_sign = synergy_sign, threshold = threshold)
+cat("  Null max_synergy:", round(summ_null$max_synergy, 4), "\n")
+cat("  Alt  max_synergy:", round(summ_alt$max_synergy, 4), "\n")
+cat("  Null synergy_index:", round(summ_null$synergy_index, 3), "\n")
+cat("  Alt  synergy_index:", round(summ_alt$synergy_index, 3), "\n")
+```
+
+**Interpretation:** The chosen statistic and summary measures show how our method distinguishes the null and alternative examples. Next, we compute bootstrap p-values for formal testing.
+
+## Bootstrap P-values
+
+```{r bootstrap-test}
+boot_null <- wild_bootstrap(Z_null, w, direction = direction, B = 500,
+                            seed = params$seed,
+                            osqp_pars = list(eps_abs = 1e-8, eps_rel = 1e-8),
+                            n_cores = 1, use_parallel = FALSE,
+                            stat = stat_choice,
+                            synergy_sign = synergy_sign,
+                            threshold = threshold,
+                            residual_scale = boot_residual_scale,
+                            df_null = boot_df_null)
+
+boot_alt <- wild_bootstrap(Z_alt, w, direction = direction, B = 500,
+                           seed = params$seed,
+                           osqp_pars = list(eps_abs = 1e-8, eps_rel = 1e-8),
+                           n_cores = 1, use_parallel = FALSE,
+                           stat = stat_choice,
+                           synergy_sign = synergy_sign,
+                           threshold = threshold,
+                           residual_scale = boot_residual_scale,
+                           df_null = boot_df_null)
+
+cat("Bootstrap p-values:\n")
+cat("  Null data: p =", round(boot_null$p_value, 4), "\n")
+cat("  Alternative data: p =", round(boot_alt$p_value, 4), "\n")
+```
+
+**Interpretation:** The bootstrap p-values quantify evidence against monotone additivity in each scenario. If the alternative p-value is borderline, it usually means the interaction is weak relative to noise *after* the projection step that defines model-consistent \(\Delta^{\text{true}}\). Here we set a stronger interaction in the alternative to make the contrast clearer.
+
+## Interaction Surface
+
+```{r interaction-surface, fig.height=4}
+delta_null <- fit_iso_null$theta - fit_add_null$theta
+delta_alt <- fit_iso_alt$theta - fit_add_alt$theta
+
+p_delta_null <- plot_synergy(delta_null, "Isotonic - Additive (Null)")
+p_delta_alt <- plot_synergy(delta_alt, "Isotonic - Additive (Alt)")
+
+p_delta_null + p_delta_alt
+```
+
+**Interpretation:** Under the null, \(\Delta^{\text{true}}\equiv 0\), but the estimated \(\hat\delta\) still shows small positive/negative patches because it is a *difference of two fits* to noisy data. Under the alternative, we expect more structured patterns aligned with the projected bump. Next we compare these results to classical synergy scores, keeping in mind that classical methods test *different null models* than monotone additivity in the transformed Z scale.
+
+## Truth vs Estimate (in Z-scale)
+
+Because this is simulated data, we can also look at the **true** interaction surface \(\Delta^{\text{true}}\) (defined model‑consistently as \(\theta_{\text{iso,true}} - \mathrm{Proj}_{\mathcal A}(\theta_{\text{iso,true}})\)).
+
+```{r truth-vs-estimate, fig.height=4}
+p_true_null <- plot_synergy(data_null$delta_true, "True Δ (Null)")
+p_true_alt <- plot_synergy(data_alt$delta_true, "True Δ (Alt)")
+
+p_true_null + p_true_alt
+```
+
+```{r truth-vs-estimate-corr}
+alt_corr <- cor(as.numeric(data_alt$delta_true), as.numeric(delta_alt))
+alt_rmse <- sqrt(mean((as.numeric(data_alt$delta_true) - as.numeric(delta_alt))^2))
+cat("Alt: corr(true Δ, estimated δ) =", round(alt_corr, 3), "\n")
+cat("Alt: RMSE(true Δ, estimated δ) =", round(alt_rmse, 4), "\n")
+```
+
+**Interpretation:** Correlation/RMSE summarize how well the estimated interaction surface recovers the ground truth at this noise level. Even when the global p-value is only moderately small, a structured \(\hat\delta\) that aligns with \(\Delta^{\text{true}}\) is scientifically informative.
+
+# Baseline Fragility: Missingness and Noise
+
+Even when baseline methods produce visually compelling landscapes, they can be unstable to missingness (especially on monotherapy edges), additional noise, and curve-fit/inversion failures.
+
+Here we perturb the **same** underlying alternative dataset by (a) introducing missing wells and (b) adding extra noise, and we re-run the baselines to see what breaks.
+
+```{r baseline-fragility, fig.height=10}
+set.seed(params$seed + 999)
+
+make_missing <- function(V, frac = 0.2) {
+  V2 <- V
+  mask <- matrix(runif(length(V)) < frac, nrow(V), ncol(V))
+  # Avoid destroying the monotherapy edges entirely (keep first row/col)
+  mask[1, ] <- FALSE
+  mask[, 1] <- FALSE
+  V2[mask] <- NA_real_
+  V2
+}
+
+add_noise <- function(V, sd = 0.03) {
+  V2 <- V
+  ok <- is.finite(as.numeric(V2))
+  V2[ok] <- clamp01(V2[ok] + rnorm(sum(ok), 0, sd), eps = 0)
+  V2
+}
+
+data_alt_miss <- data_alt
+data_alt_miss$V_obs <- make_missing(data_alt$V_obs, frac = 0.25)
+data_alt_miss$df_long$response <- as.numeric(t(data_alt_miss$V_obs))
+
+data_alt_noisy <- data_alt
+data_alt_noisy$V_obs <- add_noise(data_alt$V_obs, sd = 0.05)
+data_alt_noisy$df_long$response <- as.numeric(t(data_alt_noisy$V_obs))
+
+res_alt_clean <- apply_all_baselines(data_alt)
+res_alt_miss <- apply_all_baselines(data_alt_miss)
+res_alt_noisy <- apply_all_baselines(data_alt_noisy)
+
+count_na <- function(mat) sum(!is.finite(as.numeric(mat)))
+na_tbl <- data.frame(
+  scenario = c("clean", "missing 25%", "extra noise"),
+  bliss_na = c(count_na(res_alt_clean$bliss$synergy), count_na(res_alt_miss$bliss$synergy), count_na(res_alt_noisy$bliss$synergy)),
+  hsa_na = c(count_na(res_alt_clean$hsa$synergy), count_na(res_alt_miss$hsa$synergy), count_na(res_alt_noisy$hsa$synergy)),
+  loewe_na = c(count_na(res_alt_clean$loewe$synergy), count_na(res_alt_miss$loewe$synergy), count_na(res_alt_noisy$loewe$synergy)),
+  zip_na = c(count_na(res_alt_clean$zip$synergy), count_na(res_alt_miss$zip$synergy), count_na(res_alt_noisy$zip$synergy))
+)
+knitr::kable(na_tbl, caption = "Number of NA synergy cells under perturbations (Alternative dataset)")
+
+plot4 <- function(res, label) {
+  p1 <- plot_synergy(res$bliss$synergy, paste0("Bliss (", label, ")"))
+  p2 <- plot_synergy(res$hsa$synergy, paste0("HSA (", label, ")"))
+  p3 <- plot_synergy(res$loewe$synergy, paste0("Loewe (", label, ")"))
+  p4 <- plot_synergy(res$zip$synergy, paste0("ZIP (", label, ")"))
+  p1 + p2 + p3 + p4 + plot_layout(guides = "collect")
+}
+
+plot4(res_alt_clean, "clean") /
+  plot4(res_alt_miss, "missing 25%") /
+  plot4(res_alt_noisy, "extra noise")
+```
+
+**Interpretation:** Loewe’s gray blocks typically expand under missingness/noise because the method relies on inverting monotherapy response curves; if the observed combination response lies outside the monotherapy range (or monotherapy edges are missing), the inversion becomes ill-posed and we return `NA`. ZIP can also degrade when curve fits become unstable.
+
+# Method Comparison
+
+## Conceptual Differences
+
+```{r conceptual-comparison}
+comparison_df <- data.frame(
+  Aspect = c("Null Model", "Uses Curve Fitting", "Shape Constraints", "Statistical Test", "Handles Heteroskedasticity"),
+  Bliss = c("Multiplicative", "No", "No", "No*", "No"),
+  HSA = c("Max single-agent", "No", "No", "No*", "No"),
+  Loewe = c("Dose equivalence", "Yes (isotonic)", "Partial", "No*", "No"),
+  ZIP = c("Bliss + curves", "Yes (4PL)", "No", "No*", "No"),
+  Ours = c("Monotone-additive", "No", "Yes (2D isotonic)", "Yes (wild bootstrap)", "Yes (weighted)")
+)
+
+knitr::kable(comparison_df, caption = "Comparison of Synergy Methods")
+```
+
+*Note: Traditional methods compute synergy scores but don't typically include formal hypothesis testing with p-values. Some implementations add permutation or parametric tests as post-hoc additions.
+
+## When Do Methods Agree/Disagree?
+
+```{r agreement-analysis}
+# Flatten synergy scores
+get_scores <- function(results, name) {
+  data.frame(
+    method = name,
+    score = as.numeric(results$synergy),
+    cell = 1:length(as.numeric(results$synergy))
+  )
+}
+
+scores_alt <- rbind(
+  get_scores(results_alt$bliss, "Bliss"),
+  get_scores(results_alt$hsa, "HSA"),
+  get_scores(results_alt$loewe, "Loewe"),
+  get_scores(results_alt$zip, "ZIP")
+)
+
+# Correlation between methods
+scores_wide <- dcast(as.data.table(scores_alt), cell ~ method, value.var = "score")
+cor_mat <- cor(scores_wide[, -1, with = FALSE], use = "pairwise.complete.obs")
+
+cat("Correlation matrix between methods (Alternative scenario):\n")
+print(round(cor_mat, 3))
+```
+
+**Interpretation:** The correlation matrix quantifies agreement between baseline methods. The heatmap below visualizes these correlations.
+
+```{r correlation-plot, fig.height=5}
+# Visualize correlations
+df_cor <- as.data.frame(as.table(cor_mat))
+names(df_cor) <- c("Method1", "Method2", "Correlation")
+
+ggplot(df_cor, aes(x = Method1, y = Method2, fill = Correlation)) +
+  geom_tile() +
+  geom_text(aes(label = round(Correlation, 2)), size = 4) +
+  scale_fill_gradient2(low = "blue", mid = "white", high = "red",
+                       midpoint = 0, limits = c(-1, 1)) +
+  labs(title = "Correlation Between Synergy Methods",
+       subtitle = "Alternative scenario (with interaction)") +
+  theme_minimal(base_size = 11) +
+  coord_equal()
+```
+
+# Advantages of Shape-Constrained Approach
+
+## 1. Formal Hypothesis Testing
+
+Traditional methods give synergy *scores* but not *p-values*. Our approach provides:
+
+- Clear null hypothesis (monotone-additive)
+- Formal, selectable test statistic (e.g., \(t_{\text{int}}\), \(S^2\), max/area synergy)
+- Calibrated p-values via wild bootstrap
+- Control of Type I error
+
+## 2. Flexible Null Model
+
+- Bliss assumes multiplicative independence — violated when drugs have overlapping mechanisms
+- HSA is very conservative — only detects "super-additivity"
+- Loewe requires invertible dose-response curves — problematic when curves don't span full range
+
+Our monotone-additive null is more flexible:
+$$\theta_{ij} = \alpha + u_i + v_j$$
+
+This captures any additive combination of monotone marginal effects.
+
+## 3. Shape Constraints Are Natural
+
+Drug responses should be monotone: more drug → more effect (or at least not less). Our approach enforces this directly.
+
+## 4. Handles Heteroskedasticity
+
+With weighted least squares, we can account for varying precision across the dose matrix.
+
+# Limitations and Considerations
+
+## Our Approach
+
+- Computationally more expensive (QP + bootstrap)
+- Requires choosing direction (increasing/decreasing)
+- Grid structure assumed
+
+## Traditional Methods
+
+- Fast and simple to compute
+- Well-established in literature
+- Many software tools available
+- But: no formal hypothesis testing, sensitive to noise
+
+# Summary
+
+## Key Findings
+
+1. **Traditional methods** (Bliss, HSA, Loewe, ZIP) compute synergy scores but don't provide formal hypothesis tests
+
+2. **Different null models** lead to different conclusions — Bliss assumes multiplicative, HSA uses max, Loewe uses dose equivalence
+
+3. **Our shape-constrained approach** offers:
+   - Formal hypothesis testing with p-values
+   - Flexible monotone-additive null model
+   - Shape constraints that match biological reality
+   - Heteroskedasticity handling
+
+4. **Methods often correlate** but can disagree, especially at the boundaries
+
+## When to Use Which?
+
+- **Quick screening**: Traditional methods (fast, interpretable scores)
+- **Rigorous testing**: Shape-constrained approach (p-values, calibration)
+- **Publication**: Consider both — traditional for comparability, ours for statistical rigor
+
+## Next Steps
+
+We've compared methods on clean simulated data. But how robust are they to:
+
+- Measurement noise?
+- Missing data?
+- Small perturbations?
+
+See: `07-perturbation-stability.Rmd`
+
+# Session Info
+
+```{r session-info}
+sessionInfo()
+```
+
+**Interpretation:** Session details above document the computational environment for reproducibility.
