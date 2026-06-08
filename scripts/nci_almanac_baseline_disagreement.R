@@ -46,13 +46,35 @@ option_list <- list(
   make_option("--out-summary", type = "character", default = "results/nci_almanac_baseline_disagreement.parquet",
               help = "Output parquet with pairwise disagreement summary", metavar = "path"),
   make_option("--out-fig", type = "character", default = "figures/public/baseline_disagreement_nci_almanac.pdf",
-              help = "Output figure PDF", metavar = "path")
+              help = "Output figure PDF", metavar = "path"),
+  make_option("--replot-only", action = "store_true", default = FALSE,
+              help = "Skip recompute; read --out-summary parquet and only redraw the figure")
 )
 
 opt <- parse_args(OptionParser(option_list = option_list))
 set.seed(opt$seed)
 
 cfg <- read_config(opt$config)
+out_results <- cfg$project$out_dir_results %||% "results"
+out_figures <- cfg$project$out_dir_figures %||% "figures"
+methods <- c("Bliss", "HSA", "Loewe", "ZIP")
+q <- opt$`top-q`
+
+if (opt$`replot-only`) {
+  # Fast path: read precomputed pairwise summary and only redraw (no recompute).
+  if (!file.exists(opt$`out-summary`)) stop("Missing summary parquet: ", opt$`out-summary`)
+  out_tbl <- as.data.table(read_parquet(opt$`out-summary`))
+  df_cor <- out_tbl[metric == "pearson_corr"]
+  df_dis <- out_tbl[metric == "pos_disagree_rate"]
+  df_jac <- out_tbl[metric == "top_jaccard"]
+  lev <- intersect(methods, unique(c(df_cor$method1, df_cor$method2)))
+  for (d in list(df_cor, df_dis, df_jac)) {
+    d[, method1 := factor(method1, levels = lev)]
+    d[, method2 := factor(method2, levels = lev)]
+  }
+  message("[", now_utc(), "] Replot-only from: ", opt$`out-summary`)
+} else {
+
 data_path <- opt$data
 if (is.na(data_path) || !nzchar(data_path)) {
   data_path <- (cfg$data$standard_files %||% list())$nci_almanac
@@ -60,8 +82,6 @@ if (is.na(data_path) || !nzchar(data_path)) {
 if (is.null(data_path) || !file.exists(data_path)) stop("Missing NCI-ALMANAC data parquet: ", data_path %||% "<null>")
 if (!file.exists(opt$`grid-summary`)) stop("Missing grid summary: ", opt$`grid-summary`)
 
-out_results <- cfg$project$out_dir_results %||% "results"
-out_figures <- cfg$project$out_dir_figures %||% "figures"
 dir_create(out_results)
 dir_create(file.path(out_figures, "public"))
 
@@ -164,13 +184,37 @@ out_tbl <- rbindlist(list(df_cor, df_dis, df_jac), use.names = TRUE, fill = TRUE
 write_table(out_tbl, opt$`out-summary`)
 message("[", now_utc(), "] Wrote: ", opt$`out-summary`)
 
+}  # end recompute branch
+
+# Colorblind-safe palettes (ColorBrewer), matching the DrugCombDB figure:
+# diverging RdBu for correlation, sequential YlGnBu for rate/overlap panels.
+diverging_cols <- rev(RColorBrewer::brewer.pal(11, "RdBu"))  # blue=low, red=high
+sequential_cols <- RColorBrewer::brewer.pal(9, "YlGnBu")
+
 plot_heat <- function(df, title, subtitle = NULL, fmt = "%.2f", limits = NULL, mid = 0) {
+  df <- copy(df)
+  df[, txt_color := ifelse(abs(value - mid) > 0.6 * max(abs(limits - mid)), "white", "black")]
   ggplot(df, aes(x = method1, y = method2, fill = value)) +
     geom_tile(color = "white") +
-    geom_text(aes(label = sprintf(fmt, value)), size = 4) +
-    scale_fill_gradient2(low = "steelblue", mid = "white", high = "firebrick",
-                         midpoint = mid, limits = limits) +
+    geom_text(aes(label = sprintf(fmt, value), color = txt_color), size = 4, show.legend = FALSE) +
+    scale_color_identity() +
+    scale_fill_gradientn(colours = diverging_cols, limits = limits,
+                         values = scales::rescale(seq(limits[1], limits[2], length.out = length(diverging_cols)),
+                                                  from = limits)) +
     labs(title = title, subtitle = subtitle, x = NULL, y = NULL) +
+    theme_minimal(base_size = 11) +
+    theme(axis.text.x = element_text(angle = 30, hjust = 1))
+}
+
+plot_seq <- function(df, title, subtitle = NULL) {
+  df <- copy(df)
+  df[, txt_color := ifelse(value > 0.65, "white", "black")]
+  ggplot(df, aes(x = method1, y = method2, fill = value)) +
+    geom_tile(color = "white") +
+    geom_text(aes(label = sprintf("%.2f", value), color = txt_color), size = 4, show.legend = FALSE) +
+    scale_color_identity() +
+    scale_fill_gradientn(colours = sequential_cols, limits = c(0, 1)) +
+    labs(title = title, subtitle = subtitle, x = NULL, y = NULL, fill = NULL) +
     theme_minimal(base_size = 11) +
     theme(axis.text.x = element_text(angle = 30, hjust = 1))
 }
@@ -184,29 +228,17 @@ p_corr <- plot_heat(
   mid = 0
 )
 
-p_dis <- ggplot(df_dis, aes(x = method1, y = method2, fill = value)) +
-  geom_tile(color = "white") +
-  geom_text(aes(label = sprintf("%.2f", value)), size = 4) +
-  scale_fill_viridis_c(option = "C", limits = c(0, 1)) +
-  labs(
-    title = "Frequent sign disagreements",
-    subtitle = "Fraction where only one method reports positive synergy",
-    x = NULL, y = NULL, fill = NULL
-  ) +
-  theme_minimal(base_size = 11) +
-  theme(axis.text.x = element_text(angle = 30, hjust = 1))
+p_dis <- plot_seq(
+  df_dis,
+  title = "Frequent sign disagreements",
+  subtitle = "Fraction where only one method reports positive synergy"
+)
 
-p_jac <- ggplot(df_jac, aes(x = method1, y = method2, fill = value)) +
-  geom_tile(color = "white") +
-  geom_text(aes(label = sprintf("%.2f", value)), size = 4) +
-  scale_fill_viridis_c(option = "C", limits = c(0, 1)) +
-  labs(
-    title = paste0("Low overlap in top ", round(100 * q), "% synergy hits"),
-    subtitle = "Jaccard index of top-q call sets",
-    x = NULL, y = NULL, fill = NULL
-  ) +
-  theme_minimal(base_size = 11) +
-  theme(axis.text.x = element_text(angle = 30, hjust = 1))
+p_jac <- plot_seq(
+  df_jac,
+  title = paste0("Low overlap in top ", round(100 * q), "% synergy hits"),
+  subtitle = "Jaccard index of top-q call sets"
+)
 
 dir_create(dirname(opt$`out-fig`))
 ggsave(opt$`out-fig`, p_corr / p_dis / p_jac, width = 7.5, height = 12)

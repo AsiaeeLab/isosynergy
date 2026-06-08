@@ -29,15 +29,16 @@
 \affil*[1]{\orgdiv{Department of Biostatistics}, \orgname{Vanderbilt University Medical Center}, \orgaddress{\city{Nashville}, \state{TN}, \postcode{37232}, \country{USA}}}
 \affil[2]{\orgdiv{Department of Biostatistics}, \orgname{The University of Texas MD Anderson Cancer Center}, \orgaddress{\city{Houston}, \state{TX}, \postcode{77030}, \country{USA}}}
 \affil[3]{\orgdiv{Department of Pathology, Microbiology and Immunology}, \orgname{Vanderbilt University Medical Center}, \orgaddress{\city{Nashville}, \state{TN}, \postcode{37232}, \country{USA}}}
-\affil[4]{\orgdiv{Department of Population Health Sciences}, \orgname{Georgia Cancer Center, Augusta University}, \orgaddress{\city{Augusta}, \state{GA}, \postcode{30912}, \country{USA}}}
+\affil[4]{\orgdiv{Department of Biostatistics, Data Science, and Epidemiology}, \orgname{Georgia Cancer Center, Augusta University}, \orgaddress{\city{Augusta}, \state{GA}, \postcode{30912}, \country{USA}}}
 
 \abstract{
-High-throughput drug combination screens require methods to identify synergistic pairs, yet widely used synergy scores provide no statistical inference and can be undefined when parametric dose--response fits fail.
-We present SIR (Synergy via Isotonic Regression), a nonparametric framework that defines interaction as the deviation from a monotone-additive null within a shared monotone model class, fit by 2D isotonic regression.
-Global interaction is summarized by a weighted interaction energy, and a degrees-of-freedom-corrected wild bootstrap yields calibrated p-values for each dose--response matrix.
-On DrugCombDB, our interaction surfaces achieve higher replicate concordance (median correlation 0.91 across 1{,}839 replicate pairs) than all baselines (0.53--0.74), while avoiding Loewe's 20.9\% and ZIP's 3.6\% failure rates.
-The generative surface model also predicts missing wells (median holdout root-mean-square error 0.040).
-By replacing heuristic scores with calibrated effect sizes and p-values, the framework enables principled hit calling and error-rate control in large screens.
+High-throughput drug combination screens require methods to identify synergistic pairs, yet widely used synergy scores lack statistical inference and can fail when parametric dose--response fits do not converge.
+We present SIR (Synergy via Isotonic Regression), a nonparametric framework that defines interaction as deviation from a monotone-additive null, fit by 2D isotonic regression.
+A degrees-of-freedom-corrected wild bootstrap yields calibrated p-values for each dose--response matrix.
+On DrugCombDB, SIR interaction surfaces achieve higher replicate concordance (median correlation 0.91 across 1{,}839 replicate pairs) than all baselines (0.53--0.74), while avoiding Loewe's 20.9\% and ZIP's 3.6\% failure rates.
+The fitted surface also predicts missing wells (median holdout RMSE 0.040).
+Applied across all 319{,}533 DrugCombDB matrices with within-cell-line false-discovery-rate control, SIR identifies 5{,}260 synergistic drug pairs concentrated in just 18 of 90 cell lines, showing that synergy is localized to specific cellular contexts rather than diffuse across the screen.
+By replacing heuristic scores with calibrated effect sizes and p-values, SIR enables principled hit calling and error-rate control in large screens, and is distributed as an open-source R package with the full analysis released as a public resource.
 }
 
 \keywords{Drug combinations, synergy, shape-constrained regression, isotonic regression, wild bootstrap, hypothesis testing, reproducibility}
@@ -46,18 +47,20 @@ By replacing heuristic scores with calibrated effect sizes and p-values, the fra
 
 \section{Introduction}
 
-Drug combinations are central to combination therapy and are routinely screened in vitro across dose matrices.
+Drug combinations are a cornerstone of cancer treatment, where monotherapy resistance and an ever-expanding pharmacopeia make rational combination selection critical.
+Combinations are routinely screened in vitro across dose matrices.
 Marginal dose-response curves (e.g., Hill or sigmoid models) are often fit to each drug individually to estimate potency and efficacy \cite{Huang2012,He2018}.
 These parametric fits are then used to define a ``null'' expected combination surface under various models of additivity, against which synergy is measured.
-However, marginal curve fitting can be sensitive to preprocessing and model misfit \cite{MuSyC2021} and can fail to converge on real screening data \cite{SynergyFinder2017}.
+However, marginal curve fitting can be sensitive to preprocessing and model misfit \cite{MuSyC2021} and can fail to converge (produce no result) on real screening data \cite{SynergyFinder2017}.
 
 Several null models have been proposed for quantifying synergy.
-Bliss independence \cite{Bliss1939} assumes that drugs affect survival probabilities independently and requires no curve fitting;
+Bliss independence \cite{Bliss1939} assumes that drugs affect cell survival probabilities independently and requires no curve fitting;
 HSA (highest single agent) simply compares the combination to the more active single agent at each dose pair;
 Loewe additivity \cite{Loewe1926,Tallarida2006} and the Combination Index \cite{Chou1984} assume dose equivalence and require fitted marginal curves;
 and ZIP \cite{Yadav2015,SynergyFinder2017,SynergyFinder2022,DiVeroli2016} assumes that drugs independently shift each other's potency without changing curve shape, also requiring marginal fits.
-Each model encodes a different definition of ``no interaction,'' and because these definitions differ, the same dose-response matrix can be called synergistic by one model and antagonistic by another \cite{Berenbaum1989,Greco1995,Foucquier2015,Meyer2020,Vlot2019}.
-Moreover, all of these approaches produce pointwise scores at each dose pair, which are typically summarized by averaging across the matrix, and none provides a formal statistical test for whether interaction is present or uncertainty quantification for that conclusion.
+Each model encodes a different definition of ``no interaction,'' so the same dose-response matrix can be called synergistic by one model and antagonistic by another \cite{Berenbaum1989,Greco1995,Foucquier2015,Meyer2020,Vlot2019}.
+Moreover, all of these approaches produce pointwise scores at each dose pair, which are typically summarized by averaging across the matrix \cite{SynergyFinder2017,SynergyFinder2022}.
+While standard errors can in principle be computed at individual dose pairs, none of these methods provides a formal statistical test at the matrix level for whether overall interaction is present, nor uncertainty quantification for that conclusion.
 These limitations are increasingly consequential.
 Modern machine learning approaches often treat synergy scores as training labels \cite{DeepSynergy2018,Kuenzi2020,Menden2019}, but if labels are inconsistent across models or unstable to noise and missingness, predictive models are incentivized to chase idiosyncrasies of the chosen scoring rule rather than reproducible biology.
 Recent community benchmarks have confirmed that the choice of synergy scoring model is a major source of variation in downstream predictions \cite{Menden2019}, underscoring the need for stable, statistically grounded alternatives.
@@ -71,11 +74,11 @@ A global interaction statistic summarizes the entire matrix and, through bootstr
 
 \section{Results}
 
-\subsection{Synergy labels are fragmented across null models}
+\subsection{Synergy labels show poor concordance across null models}
 
 To quantify disagreement among widely used baselines, we analyzed 391{,}652 dose--response matrices from DrugCombDB \cite{DrugCombDB2020} for which all four baseline methods (Bliss, HSA, Loewe, ZIP) returned valid (non-NA) summary scores via SynergyFinder conventions \cite{SynergyFinder2017}.
 Each score summarizes a full matrix by averaging pointwise synergy values across dose pairs.
-These matrix-level scores show strong dependence on the chosen null model: Bliss and ZIP correlate highly (Pearson $r=0.92$), while Loewe correlates weakly with ZIP ($r=0.28$) and Bliss ($r=0.33$) (Fig.~\ref{fig:baseline_disagreement}).
+These matrix-level scores show strong dependence on the chosen null model: Bliss and ZIP correlate highly (Pearson $r=0.92$), while Loewe correlates weakly with ZIP ($r=0.28$) and Bliss ($r=0.33$) (Fig.~\ref{fig:baseline_disagreement}; pairwise scatterplots in Supplementary Fig.~4).
 Disagreement is not limited to scaling: for 21--34\% of matrices, one method reports synergy (positive score) while the other reports antagonism (Fig.~\ref{fig:baseline_disagreement}).
 Even ``top hit'' sets overlap modestly: among the top 5\% most synergistic calls, the Loewe--ZIP Jaccard overlap is 0.36 (Fig.~\ref{fig:baseline_disagreement}).
 These discrepancies imply that ``synergy'' labels used in downstream analyses, including ML training \cite{DeepSynergy2018,Kuenzi2020}, can vary substantially with the scoring model.
@@ -109,9 +112,9 @@ Their difference defines the \emph{interaction surface},
 interpretable as synergy (for viability) when $\delta_{ij}<0$ (lower viability than additive expectation).
 Importantly, the interaction surface is not constrained to be monotone; it can take any sign pattern across the grid, capturing spatially heterogeneous interaction (e.g., synergy at some dose pairs and antagonism at others).
 We summarize the overall strength of interaction across the grid by the \emph{interaction energy} $S^2=\sum_{ij} w_{ij}\delta_{ij}^2$, a single scalar that measures weighted squared departure from additivity, analogous to a goodness-of-fit statistic comparing the additive model to the unconstrained monotone model (Online Methods, \emph{Interaction surface and summaries}).
-We choose $S^2$ over alternatives such as the difference in residual sums of squares ($\mathrm{SSE}_{\mathrm{add}}-\mathrm{SSE}_{\mathrm{iso}}$) because $S^2$ depends only on the interaction surface $\delta$ and is therefore invariant to the residual noise level, making it more comparable across datasets.
+We choose $S^2$ over alternatives such as the difference in residual sums of squares ($\mathrm{SSE}_{\mathrm{add}}-\mathrm{SSE}_{\mathrm{iso}}$) because $S^2$ depends only on the interaction surface $\delta$ rather than explicitly on residual magnitudes, making it more comparable across datasets in expectation.
 Note that the interaction signal naturally concentrates at intermediate dose combinations, where one drug is effective enough to reveal synergy or antagonism with the other; at the lowest and highest dose corners, both models predict similar values and $\delta$ is typically near zero.
-A key advantage of this definition is that both the null and the alternative models live in the same monotone function class, so the interaction surface reflects genuine departures from additivity rather than artifacts of comparing models with different structural assumptions.
+A key advantage of this definition is that the null model $\mathcal{A}$ is a nested submodel of the alternative $\mathcal{M}$, both within the same monotone function class, so the interaction surface reflects genuine departures from additivity rather than artifacts of comparing models with different structural assumptions.
 Figure~\ref{fig:overview} illustrates the SIR workflow on a DrugCombDB example, from observed viability through the fitted surfaces to the interaction map and bootstrap p-value.
 
 \begin{figure}[t]
@@ -130,11 +133,11 @@ Figure~\ref{fig:overview} illustrates the SIR workflow on a DrugCombDB example, 
 
 \subsection{Calibrated hypothesis testing by df-corrected wild bootstrap}
 
-Existing synergy methods (Bliss, HSA, Loewe, ZIP) return scores without p-values, so there is no principled way to decide whether an observed score reflects true interaction or noise, nor to control false-positive rates when screening thousands of drug pairs.
-SIR addresses this by computing a p-value for each matrix using a wild bootstrap \cite{Wu1986} under the monotone-additive null.
-A standard challenge in bootstrap testing is that residuals from a fitted model underestimate the true noise: because the model was estimated from the same data, it passes closer to the observations than the true generating process would, shrinking the residuals.
+Existing synergy methods (Bliss, HSA, Loewe, ZIP) return matrix-level synergy scores without p-values, so there is no principled way to assess whether an observed score reflects true interaction or noise, nor to control false-positive rates when screening thousands of drug pairs.
+SIR addresses this by computing a p-value for each matrix using a wild bootstrap \cite{Wu1986,Mammen1993} under the monotone-additive null.
+A standard challenge in bootstrap testing is that residuals from a fitted model underestimate the true noise: because the model was estimated from the same data, it passes closer to the observations than the true underlying dose-response surface would, shrinking the residuals.
 Bootstrapping with these shrunken residuals produces synthetic datasets that are less variable than real data, biasing the test toward false positives.
-We correct for this by inflating residuals by a degrees-of-freedom factor before resampling, analogous to the $n/(n-p)$ correction in linear regression variance estimation (Online Methods, \emph{Wild bootstrap inference with df correction}).
+We correct for this by inflating residuals by a degrees-of-freedom factor before resampling, analogous to the $n/(n-p)$ correction in linear regression variance estimation, where $n$ is the number of observed grid cells and $p$ is the effective degrees of freedom consumed by the null fit (for a typical $5\times 5$ grid with monotone marginals, $n=25$ and $df_{\mathrm{null}}\approx 9$, giving a ratio of approximately 1.56; Online Methods, \emph{Wild bootstrap inference with df correction}).
 
 To verify that these p-values are well calibrated, we performed a pseudo-null experiment on 300 randomly selected DrugCombDB matrices: for each, we fit the additive null, generated synthetic data by randomly flipping the sign of the corrected residuals (so that no true interaction is present by construction), and reran the full bootstrap test.
 If the test is properly calibrated, the resulting p-values should follow a uniform distribution, and the false-positive rate at any threshold $\alpha$ should be close to $\alpha$.
@@ -159,10 +162,10 @@ These results confirm that SIR has adequate power to detect biologically meaning
   \centering
   \includegraphics[width=\linewidth]{\detokenize{simulation_calibration_power.pdf}}
   \caption{\textbf{Simulation: calibration and power of the SIR test} ($8\times 8$ grids; $\sigma=0.1$ on the logit scale; $B=200$).
-  Top: empirical CDF of p-values under a simulated additive null ($n=200$ simulations) with 95\% Dvoretzky--Kiefer--Wolfowitz band.
-  The CDF stays within the band around the uniform diagonal, confirming that the test does not produce excess false positives.
+  Top: empirical cumulative distribution function (ECDF) of p-values under a simulated additive null ($n=200$ simulations) with 95\% Dvoretzky--Kiefer--Wolfowitz band.
+  The CDF closely follows the uniform diagonal, with only minor excursions near the band boundary, confirming that the test does not produce excess false positives.
   Bottom: power to detect interaction ($\alpha=0.05$) as interaction strength increases ($n=30$ simulations per strength).
-  Power rises from near zero at the null to $>$95\% at the strongest departures, indicating that the test reliably identifies true synergy when the signal is present.}
+  Power rises from near zero at the null to $>$95\% at the strongest departures; the steep transition is typical of power curves and reflects the signal crossing the detection threshold.}
   \label{fig:sim_power}
 \end{figure}
 
@@ -170,6 +173,7 @@ These results confirm that SIR has adequate power to detect biologically meaning
 
 Reproducible synergy estimates are essential for translating screens into follow-up experiments.
 If a method assigns different synergy labels to two independent measurements of the same drug pair in the same cell line, its conclusions cannot be trusted.
+Because these are independent experiments with distinct biological noise, we do not expect identical surfaces, but a reliable method should produce highly correlated interaction patterns.
 In DrugCombDB, 1{,}209 unique drug-pair/cell-line combinations were measured in two or more independent experiments, yielding 1{,}839 replicate pairs (some combinations had three or more experiments, producing multiple pairs).
 For each replicate pair, we computed the SIR interaction surface $\delta$ and the corresponding baseline synergy surfaces, then measured the Pearson correlation between replicate surfaces as a measure of reproducibility (Online Methods, \emph{Benchmarks}).
 SIR's interaction surface $\delta$ on the logit scale is substantially more reproducible than all baselines: median replicate correlation is 0.91, compared to 0.53 (Bliss), 0.61 (HSA), 0.74 (Loewe) and 0.71 (ZIP) (Fig.~\ref{fig:replicate}).
@@ -235,6 +239,25 @@ Null assumption & Monotone & Indep. & Max effect & Dose equiv. & \parbox{1.8cm}{
 \end{tabular}
 \end{table}
 
+\subsection{Calibrated discovery localizes synergy to a minority of cellular contexts}
+
+Having established that SIR is calibrated (Fig.~\ref{fig:pseudonull}), reproducible (Fig.~\ref{fig:replicate}), and never fails, we applied it across all 319{,}533 DrugCombDB dose--response matrices to ask where, with formal error control, synergy actually occurs.
+The matrix-level p-values are strongly anti-conservative relative to the uniform null: 17.9\% of matrices have $p\le 0.05$ (a $3.6\times$ enrichment over the 5\% expected under the global null) and 4.0\% have $p\le 0.01$ ($4.0\times$), confirming that genuine interaction signal is abundant in the screen.
+Translating this signal into discoveries requires multiple-testing control, and here the scale of the screen interacts with the resolution of the bootstrap.
+A bootstrap p-value with $B$ resamples cannot fall below $1/(B+1)$, so a Benjamini--Hochberg (BH) procedure applied across the entire universe of $N=319{,}533$ tests can reject a target of $R$ discoveries only if $B \ge N/(\alpha R) - 1$ (Online Methods, \emph{Multiple testing in screens}); at $B=200$ and $\alpha=0.05$ this floor is far too coarse and yields no universe-wide rejections despite the abundant signal.
+This is a property of the testing family, not of the method: the natural unit of a combination screen is the cell line, and applying BH \emph{within each cell line} already recovers 2{,}686 synergistic drug pairs at FDR 0.05.
+To resolve the bootstrap floor without discarding the existing computation, we adaptively increased the resampling depth on candidate matrices to $B=20{,}000$, reusing the original draws by pooling exceedance counts (Online Methods, \emph{Adaptive resampling}).
+This raised the per-cell-line tally to \textbf{5{,}260 FDR-significant synergistic pairs}, while retaining 96.7\% of the original calls (the small turnover reflects borderline matrices reclassified by the finer resolution).
+Strikingly, these discoveries concentrate in just \textbf{18 of 90 cell lines} (e.g., SKMEL30, 1{,}304; VCAP, 1{,}191; ES2, 655; A2058, 397); the remaining 72 cell lines contain no pair that survives FDR control.
+Because SIR reports calibrated effect sizes and p-values rather than heuristic scores, it can make this distinction at all---synergy is not a diffuse property of the pharmacopeia but is localized to specific cellular contexts, a conclusion that scoring methods without inference cannot support.
+The complete table of per-matrix interaction energies, p-values, and per-cell-line FDR calls is released as a public resource (\emph{Data availability}).
+
+To ask whether these calibrated discoveries agree with existing heuristics, we compared SIR's hits against the four baseline scores (Supplementary Fig.~5).
+SIR's hits are strongly enriched for baseline-flagged synergy: median scores in the hit set far exceed those of non-hits for all four methods (e.g., Bliss $+3.95$ vs $+0.27$; HSA $+5.04$ vs $+0.17$; ZIP $+2.60$ vs $-0.70$; all Mann--Whitney $p<10^{-200}$), and 70--83\% of hits share the synergy direction of Bliss, ZIP, and HSA (Loewe agrees only 45\%, consistent with its disagreement with the other scores in Fig.~\ref{fig:baseline_disagreement}).
+SIR therefore does not flag noise---its discoveries lie where the heuristics also see the strongest synergy.
+Yet the calibrated hit set is not redundant with any single score: per cell line, the Jaccard overlap between SIR's hits and each baseline's top 5\% is only $\sim$0.05.
+In other words, SIR concords with the heuristics on the overall location of synergy while substantially re-ranking which specific pairs clear formal error control---adding inference rather than another score.
+
 \section{Discussion}
 
 SIR is a statistical framework for drug combination interaction that replaces fragile parametric curve fitting with shape-constrained regression and supplies calibrated p-values by a df-corrected wild bootstrap.
@@ -246,6 +269,7 @@ Third, the absence of uncertainty quantification in common scoring approaches, i
 These issues are relevant for machine-learning-guided combination discovery.
 ML pipelines that predict synergy scores \cite{DeepSynergy2018,Kuenzi2020,Menden2019} inherit label noise when those scores are inconsistent across models or undefined due to fit failures.
 SIR may provide more defensible training labels by returning calibrated effect sizes and p-values rather than heuristic scores, though a direct comparison of downstream ML performance remains future work.
+More broadly, the monotone fit yields robust, always-defined summaries of a dose--response experiment---not only the interaction energy but also overall efficacy, such as the area under the fitted monotone surface---that avoid the instability of parametric potency estimates like IC50 and the inconsistency of heuristic synergy scores. Like the activity-area metrics already preferred over IC50 in large pharmacogenomic screens \cite{Barretina2012}, but with the additional denoising of a shape constraint, such summaries may serve as more reproducible prediction targets for machine learning; benchmarking them against IC50 and empirical area is a natural separate study.
 
 \paragraph{Relationship to other frameworks.}
 MuSyC \cite{MuSyC2021} takes a complementary approach: it fits a parametric multi-parameter surface to disentangle efficacy, potency, and cooperativity synergy.
@@ -265,7 +289,7 @@ Dataset-scale diagnostics on DrugCombDB indicate that most apparent monotonicity
 When strong non-monotonicity is suspected, diagnostics can flag affected matrices for alternative modeling.
 
 \paragraph{Interaction at dose extremes.}
-The interaction surface $\delta$ naturally concentrates at intermediate dose combinations: at the lowest doses, neither drug is effective and both models predict viability near one; at the highest doses, both drugs independently drive viability toward zero, leaving little room for additional combinatorial effect (a floor effect).
+The interaction surface $\delta$ naturally concentrates at intermediate dose combinations: at the lowest doses, neither drug is effective and both models predict viability near one (a ceiling effect); at the highest doses, both drugs independently drive viability toward zero, leaving little room for additional combinatorial effect (a floor effect).
 This is pharmacologically expected and does not bias the global test, because $S^2$ sums over all grid cells and near-zero $\delta$ values at the corners contribute negligibly.
 The logit transform partially mitigates the compression by stretching both tails, but the floor effect persists in practice.
 Users interested in dose-specific synergy should examine the interaction surface directly rather than relying solely on the global test.
@@ -275,6 +299,9 @@ The null hypothesis of monotone additivity is defined on the scale determined by
 Because different transforms (logit, identity, asinh) impose different geometries, inference results can depend on this choice, a property shared by all parametric and semiparametric interaction tests.
 We recommend the logit link as a principled default for bounded viability data: it maps $[0,1]$ to $\mathbb{R}$, stabilizes variance near the boundaries, and defines additivity on a scale where equal increments correspond to equal log-odds changes.
 When the appropriate scale is uncertain, we recommend reporting results under two or more transforms as a sensitivity check (Supplementary Note~2).
+
+\paragraph{Clinical relevance and the additive null.}
+SIR tests for departure from additivity---which is also the regime that governs most clinical combination benefit. Large analyses of approved regimens find their efficacy is predicted by drug additivity or independent action rather than synergy \cite{PalmerSorger2017,LingHuang2020}, consistent with our own observation that synergy is localized to a minority of cellular contexts and that FDA-approved combinations are not enriched for in-vitro synergy under any scoring method. SIR's monotone-additive null is therefore aligned with the clinically relevant reference, and the framework is deliberately agnostic about whether a detected departure translates into patient benefit. A further consideration for all in-vitro synergy analysis is that dose grids routinely span concentrations well above those achievable in patients \cite{ListonDavis2017}, so interaction detected only at non-physiological doses may be clinically irrelevant. Because SIR operates on a weighted grid, it extends naturally to clinically windowed inference: restricting or down-weighting the test to the achievable concentration range---for example the sustained plasma concentration that matches the constant-exposure conditions of in-vitro assays \cite{LingHuang2020}---would flag interactions that are simultaneously calibrated and pharmacologically reachable. We regard this dose-windowed extension as a promising route toward clinically actionable synergy testing.
 
 \paragraph{Limitations.}
 SIR tests for departure from monotone additivity but does not decompose the interaction into mechanistic components (e.g., potency versus efficacy synergy, as in MuSyC \cite{MuSyC2021}).
@@ -356,9 +383,22 @@ The default $B=200$ provides adequate resolution for exploratory screens (p-valu
 On a single core, the full test takes $\approx$0.9\,s per $4\times 4$ matrix and $\approx$1.5\,s per $10\times 10$ matrix with $B=200$; a 400{,}000-matrix screen completes in $\approx$14 hours on 8 cores.
 
 \subsection{Multiple testing in screens}
-When applying the test across a screen of $M$ matrices, standard false-discovery-rate procedures (e.g., Benjamini--Hochberg \cite{BenjaminiHochberg1995}) can be applied directly to the per-matrix p-values.
-Users should note that the smallest achievable p-value is $1/(B+1)$; for large screens where the FDR threshold may require very small p-values, increasing $B$ is recommended.
-Stratifying by cell line or plate before applying FDR correction can improve power, because matrices within the same cell line or plate tend to share similar noise levels, making the p-value distribution within each stratum more homogeneous.
+When applying the test across a screen of $N$ matrices, standard false-discovery-rate procedures (e.g., Benjamini--Hochberg (BH) \cite{BenjaminiHochberg1995}) can be applied to the per-matrix p-values.
+A bootstrap p-value with $B$ resamples cannot fall below $1/(B+1)$, and this resolution floor interacts with the size of the testing family: to reject a target of $R$ discoveries at level $\alpha$, the $R$-th smallest p-value must satisfy $p_{(R)} \le \alpha R/N$, which combined with the floor gives the necessary condition
+\begin{equation}
+B \ge \frac{N}{\alpha R} - 1.
+\label{eq:bmin}
+\end{equation}
+Testing the entire DrugCombDB universe as one family ($N=319{,}533$) at $\alpha=0.05$ therefore requires $B$ in the tens of thousands to resolve even hundreds of discoveries; at $B=200$ no rejection is possible regardless of signal.
+We therefore apply FDR control within each cell line, the natural unit of a combination screen: this both reduces $N$ to the per-cell-line count and homogenizes the noise level within each stratum.
+We do not use a per-matrix analytic null in place of the bootstrap: the interaction statistic is a squared difference of projections onto two nested \emph{cones}, whose null distribution depends on the position of the true additive surface within the cone, so closed-form and shared (surface-free) analytic nulls, as well as independent filtering on interaction-correlated covariates, are anticonservative or invalidate FDR control (Supplementary Note~3). A per-matrix resampling null---the wild bootstrap---is required, and its resolution floor is overcome by increasing $B$ on candidate matrices (\emph{Adaptive resampling}).
+
+\subsection{Adaptive resampling}
+To resolve the $1/(B+1)$ floor at screen scale without recomputing the initial bootstrap, we exploit the fact that the wild-bootstrap p-value records a sufficient statistic: from a stored p-value at depth $B_0$ the exceedance count is recovered exactly as $k_0 = \mathrm{round}\!\big(p\,(B_0+1)\big) - 1$.
+We then draw $B_1$ additional independent sign-flip resamples under the identical null (same fitted additive surface, residuals, and df rescaling), count new exceedances $k_1$, and pool to a refined p-value $p = (1 + k_0 + k_1)/(B_0 + B_1 + 1)$.
+Because the bootstrap null is determined by the data and the only randomness is the sign flips, the pooled estimator is exact and the original draws are never wasted.
+We escalate $B$ only on candidate matrices that can still be rejected (within-cell-line nominal $p\le 0.05$), recompute BH after each escalation, and stop when the discovery set stabilizes.
+For the DrugCombDB analysis we escalated 57{,}109 candidate matrices from $B_0=200$ to $B=20{,}000$ (a $\sim$28-fold-faster shape-constrained projection implementation makes this a few CPU-hours; Supplementary Note~1).
 
 \subsection{Benchmarks}
 \textbf{Baseline disagreement:} We computed pairwise correlations, sign disagreement rates, and top-hit overlaps across baseline scores on DrugCombDB matrices with valid (non-NA) Bliss, HSA, Loewe and ZIP scores (391{,}652 matrices).
@@ -372,17 +412,20 @@ Under the alternative (injected interaction at five positive strengths), we eval
 All simulations used $B=200$ bootstrap resamples.
 
 \subsection{Code availability}
-The SIR R package and all analysis scripts are available at \texttt{https://github.com/AsiaeeLab/SIR} (Supplementary Note~1).
-The repository includes source code, configuration files, experiment notebooks, and instructions to reproduce all figures and tables in this manuscript.
+SIR is provided as an open-source R package installable with \texttt{devtools::install\_github("AsiaeeLab/SIR")} from \texttt{https://github.com/AsiaeeLab/SIR}, with a tagged release archived on Zenodo (DOI: [to be assigned on acceptance]).
+The package exposes the full method through a single entry point, \texttt{sir\_test()}, returning the interaction surface, interaction energy, and bootstrap p-value with \texttt{print}/\texttt{summary}/\texttt{plot} methods, alongside the constituent fitting routines (\texttt{isotonic\_2d\_fit}, \texttt{additive\_ordered\_fit}, \texttt{wild\_bootstrap}) and reference implementations of the Bliss, HSA, Loewe and ZIP baselines; it ships with a vignette and unit tests and passes \texttt{R CMD check} cleanly.
+The repository additionally includes all analysis scripts, configuration files, an \texttt{renv} lockfile, and instructions to reproduce every figure and table in this manuscript.
 
 \subsection{Data availability}
-DrugCombDB data are publicly available at \texttt{http://drugcombdb.denglab.org/} \cite{DrugCombDB2020}.
-NCI-ALMANAC data are available from the National Cancer Institute at \texttt{https://wiki.nci.nih.gov/display/NCIDTPdata/NCI-ALMANAC}.
-Download instructions, checksums, and file placement details are provided in the repository README.
+The primary inputs are public: DrugCombDB \cite{DrugCombDB2020} at \texttt{http://drugcombdb.denglab.org/} and NCI-ALMANAC from the National Cancer Institute at \texttt{https://wiki.nci.nih.gov/display/NCIDTPdata/NCI-ALMANAC}.
+As a resource for the community, we release the complete SIR analysis of DrugCombDB---per-matrix interaction energies, wild-bootstrap p-values (at $B=20{,}000$ for escalated candidates), and per-cell-line FDR calls for all 319{,}533 dose--response matrices---deposited on Zenodo (DOI: [to be assigned on acceptance]) under a CC-BY licence.
+This provides stable, calibrated synergy labels as an alternative to the inconsistent heuristic scores currently used to train predictive models.
 
 \section*{Acknowledgements}
-A.A.\ was supported in part by the Patient-Centered Outcomes Research Institute (PCORI) award ME-2023C1-32148 and by the National Human Genome Research Institute (NHGRI) of the National Institutes of Health under award R00~HG011367.
-The content is solely the responsibility of the authors and does not necessarily represent the official views of PCORI, NHGRI, or the National Institutes of Health.
+A.A.\ and S.P.\ were supported in part by the Patient-Centered Outcomes Research Institute (PCORI) award ME-2023C1-32148.
+A.A.\ was additionally supported by the National Human Genome Research Institute (NHGRI) of the National Institutes of Health under award R00~HG011367.
+J.P.L.\ received support from the National Cancer Institute and the National Center for Advancing Translational Sciences of the NIH (P50CA127001-16, CCSG P30CA016672-46, and CCTS UM1TR004906).
+The content is solely the responsibility of the authors and does not necessarily represent the official views of PCORI, the NIH, or any of the funding agencies listed above.
 
 \section*{Author contributions}
 A.A.\ and K.R.C.\ conceived the method.

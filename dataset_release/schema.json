@@ -1,0 +1,271 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "SIR-derived DrugCombDB synergy calls row schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["matrix_id", "drug_a_name", "drug_b_name", "cell_line", "source_study", "n_doses_a", "n_doses_b", "n_replicates_total", "sir_S2", "sir_p_value", "sir_q_value", "sir_hit_call", "sir_failed", "bliss_score", "bliss_failed", "bliss_unavailable", "hsa_score", "hsa_failed", "hsa_unavailable", "loewe_score", "loewe_failed", "loewe_unavailable", "zip_score", "zip_failed", "zip_unavailable", "sir_version", "drugcombdb_version", "analysis_date", "bootstrap_B"],
+  "properties": {
+    "matrix_id": {
+      "type": "string"
+    },
+    "drug_a_name": {
+      "type": "string"
+    },
+    "drug_b_name": {
+      "type": "string"
+    },
+    "cell_line": {
+      "type": "string"
+    },
+    "source_study": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "n_doses_a": {
+      "type": "integer"
+    },
+    "n_doses_b": {
+      "type": "integer"
+    },
+    "n_replicates_total": {
+      "type": "integer"
+    },
+    "sir_S2": {
+      "type": "number"
+    },
+    "sir_p_value": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "sir_q_value": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "sir_hit_call": {
+      "type": "string",
+      "enum": ["synergy", "antagonism", "no_call"]
+    },
+    "sir_failed": {
+      "type": "boolean"
+    },
+    "bliss_score": {
+      "type": [
+        "number",
+        "null"
+      ]
+    },
+    "bliss_failed": {
+      "type": "boolean"
+    },
+    "bliss_unavailable": {
+      "type": "boolean"
+    },
+    "hsa_score": {
+      "type": [
+        "number",
+        "null"
+      ]
+    },
+    "hsa_failed": {
+      "type": "boolean"
+    },
+    "hsa_unavailable": {
+      "type": "boolean"
+    },
+    "loewe_score": {
+      "type": [
+        "number",
+        "null"
+      ]
+    },
+    "loewe_failed": {
+      "type": "boolean"
+    },
+    "loewe_unavailable": {
+      "type": "boolean"
+    },
+    "zip_score": {
+      "type": [
+        "number",
+        "null"
+      ]
+    },
+    "zip_failed": {
+      "type": "boolean"
+    },
+    "zip_unavailable": {
+      "type": "boolean"
+    },
+    "sir_version": {
+      "type": "string"
+    },
+    "drugcombdb_version": {
+      "type": "string"
+    },
+    "analysis_date": {
+      "type": "string",
+      "format": "date"
+    },
+    "bootstrap_B": {
+      "type": "integer"
+    }
+  },
+  "x-parquet-column-order": ["matrix_id", "drug_a_name", "drug_b_name", "cell_line", "source_study", "n_doses_a", "n_doses_b", "n_replicates_total", "sir_S2", "sir_p_value", "sir_q_value", "sir_hit_call", "sir_failed", "bliss_score", "bliss_failed", "bliss_unavailable", "hsa_score", "hsa_failed", "hsa_unavailable", "loewe_score", "loewe_failed", "loewe_unavailable", "zip_score", "zip_failed", "zip_unavailable", "sir_version", "drugcombdb_version", "analysis_date", "bootstrap_B"],
+  "x-parquet-columns": [
+    {
+      "name": "matrix_id",
+      "type": "string",
+      "nullable": false
+    },
+    {
+      "name": "drug_a_name",
+      "type": "string",
+      "nullable": false
+    },
+    {
+      "name": "drug_b_name",
+      "type": "string",
+      "nullable": false
+    },
+    {
+      "name": "cell_line",
+      "type": "string",
+      "nullable": false
+    },
+    {
+      "name": "source_study",
+      "type": "string",
+      "nullable": true
+    },
+    {
+      "name": "n_doses_a",
+      "type": "integer",
+      "nullable": false
+    },
+    {
+      "name": "n_doses_b",
+      "type": "integer",
+      "nullable": false
+    },
+    {
+      "name": "n_replicates_total",
+      "type": "integer",
+      "nullable": false
+    },
+    {
+      "name": "sir_S2",
+      "type": "number",
+      "nullable": false
+    },
+    {
+      "name": "sir_p_value",
+      "type": "number",
+      "nullable": false,
+      "minimum": 0,
+      "maximum": 1
+    },
+    {
+      "name": "sir_q_value",
+      "type": "number",
+      "nullable": false,
+      "minimum": 0,
+      "maximum": 1
+    },
+    {
+      "name": "sir_hit_call",
+      "type": "string",
+      "nullable": false,
+      "enum": ["synergy", "antagonism", "no_call"]
+    },
+    {
+      "name": "sir_failed",
+      "type": "boolean",
+      "nullable": false
+    },
+    {
+      "name": "bliss_score",
+      "type": "number",
+      "nullable": true
+    },
+    {
+      "name": "bliss_failed",
+      "type": "boolean",
+      "nullable": false
+    },
+    {
+      "name": "bliss_unavailable",
+      "type": "boolean",
+      "nullable": false
+    },
+    {
+      "name": "hsa_score",
+      "type": "number",
+      "nullable": true
+    },
+    {
+      "name": "hsa_failed",
+      "type": "boolean",
+      "nullable": false
+    },
+    {
+      "name": "hsa_unavailable",
+      "type": "boolean",
+      "nullable": false
+    },
+    {
+      "name": "loewe_score",
+      "type": "number",
+      "nullable": true
+    },
+    {
+      "name": "loewe_failed",
+      "type": "boolean",
+      "nullable": false
+    },
+    {
+      "name": "loewe_unavailable",
+      "type": "boolean",
+      "nullable": false
+    },
+    {
+      "name": "zip_score",
+      "type": "number",
+      "nullable": true
+    },
+    {
+      "name": "zip_failed",
+      "type": "boolean",
+      "nullable": false
+    },
+    {
+      "name": "zip_unavailable",
+      "type": "boolean",
+      "nullable": false
+    },
+    {
+      "name": "sir_version",
+      "type": "string",
+      "nullable": false
+    },
+    {
+      "name": "drugcombdb_version",
+      "type": "string",
+      "nullable": false
+    },
+    {
+      "name": "analysis_date",
+      "type": "string",
+      "nullable": false,
+      "format": "date"
+    },
+    {
+      "name": "bootstrap_B",
+      "type": "integer",
+      "nullable": false
+    }
+  ]
+}

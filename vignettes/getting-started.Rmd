@@ -1,0 +1,113 @@
+---
+title: "Getting started with SIR"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Getting started with SIR}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  fig.width = 5,
+  fig.height = 4
+)
+```
+
+```{r}
+library(SIR)
+```
+
+## A small synthetic example
+
+We generate a small (6 by 6) dose-response matrix on a transformed scale,
+with a known synergistic bump in the middle of the grid. Rows index doses
+of drug A and columns doses of drug B.
+
+```{r}
+set.seed(2026)
+I <- 6L; J <- 6L
+
+# Monotone-decreasing single-agent effects, centered.
+u <- -cumsum(abs(rnorm(I, mean = 0.30, sd = 0.10))); u <- u - mean(u)
+v <- -cumsum(abs(rnorm(J, mean = 0.30, sd = 0.10))); v <- v - mean(v)
+
+# Additive null surface.
+Z_add <- outer(u, v, "+")
+
+# Negative bump at the centre of the grid -> synergy under "decreasing" data.
+ii <- seq_len(I); jj <- seq_len(J)
+bump <- outer(ii, jj, function(i, j) {
+  exp(-((i - (I + 1) / 2)^2 + (j - (J + 1) / 2)^2) / (2 * 1.2^2))
+})
+Z <- Z_add - 0.30 * bump + 0.05 * matrix(rnorm(I * J), I, J)
+```
+
+## Running the SIR test
+
+The convenient entry point is `sir_test()`. It fits both the
+monotone-additive null surface and a fully monotone two-dimensional
+isotonic surface, then computes a wild-bootstrap p-value against the
+additive null. We use a small bootstrap (`B = 100`) here so the vignette
+runs quickly; in practice values around 200 to 500 are typical.
+
+```{r}
+fit <- sir_test(
+  Z,
+  B = 100,
+  direction = "decreasing",
+  synergy_sign = "negative",
+  stat = "S2",
+  seed = 1
+)
+
+fit
+```
+
+A more detailed view is provided by `summary()`:
+
+```{r}
+summary(fit)
+```
+
+## Inspecting the interaction surface
+
+The fitted interaction surface `delta = theta_iso - theta_add` is
+returned in `fit$delta`. Negative values indicate synergy under
+viability-style data:
+
+```{r}
+round(fit$delta, 3)
+```
+
+A heatmap of the interaction surface is the default plot:
+
+```{r}
+plot(fit)
+```
+
+## Comparing against classical baselines
+
+SIR also exposes the four most common synergy baselines, useful for
+sanity-checking and methods comparisons. They consume long-format
+dose-response tables:
+
+```{r}
+df <- data.frame(
+  doseA = rep(seq_len(I), times = J),
+  doseB = rep(seq_len(J), each = I),
+  response = pmax(0, pmin(1, plogis(as.numeric(Z)))),
+  replicate = "1"
+)
+
+bliss <- bliss_score(df, response_mode = "viability")
+hsa   <- hsa_score(df, response_mode = "viability")
+
+dim(bliss$synergy)
+dim(hsa$synergy)
+```
+
+For full details on each helper, see `?additive_ordered_fit`,
+`?isotonic_2d_fit`, `?wild_bootstrap`, and `?interaction_summaries`.

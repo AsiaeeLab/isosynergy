@@ -10,6 +10,30 @@ infer_synergy_sign <- function(response_mode, direction) {
   "negative"
 }
 
+#' Interaction Surface Summary Statistics
+#'
+#' Computes weighted summary statistics from an interaction surface
+#' `delta = theta_iso - theta_add`, including the squared-norm energy
+#' `S2`, signed-positive and signed-negative parts, max synergy and
+#' antagonism, area-of-synergy counts, and a synergy index.
+#'
+#' @param delta Numeric matrix of interaction values (isotonic minus
+#'   additive surface).
+#' @param w Numeric matrix of nonnegative weights with the same
+#'   dimensions as `delta`.
+#' @param synergy_sign Direction of synergy: `"negative"` (default) for
+#'   viability data, `"positive"` for inhibition data.
+#' @param threshold Threshold beyond which a cell is counted as
+#'   `area_synergy`. Defaults to `0`.
+#'
+#' @return A named list of weighted summaries (`S2`, `S2_mean`, `Splus`,
+#'   `Sminus`, `S2_plus`, `S2_minus`, `mean_delta_w`, `max_synergy`,
+#'   `max_antagonism`, `area_synergy`, `area_synergy_weighted`,
+#'   `synergy_energy`, `antagonism_energy`, `synergy_index`,
+#'   `synergy_sign`, `threshold`).
+#'
+#' @seealso [interaction_fit()], [sir_test()].
+#' @export
 interaction_summaries <- function(delta, w, synergy_sign = c("negative", "positive"), threshold = 0) {
   synergy_sign <- match.arg(synergy_sign)
   d <- as.numeric(delta)
@@ -103,6 +127,29 @@ interaction_stat <- function(stat, delta, w, sse_add, sse_iso, synergy_sign, thr
   stop("Unknown stat: ", stat)
 }
 
+#' Fit Interaction Surface from a Dose-Response Matrix
+#'
+#' Fits the monotone-additive null and the fully monotone isotonic
+#' surface to a weighted dose-response matrix and returns both surfaces,
+#' their difference (the interaction surface), and a bundle of
+#' weighted summary statistics from [interaction_summaries()].
+#'
+#' @param barZ Numeric matrix of (transformed) mean responses.
+#' @param w Numeric matrix of nonnegative weights with the same
+#'   dimensions as `barZ`.
+#' @param direction Direction of monotonicity (`"decreasing"` or
+#'   `"increasing"`).
+#' @param osqp_pars Named list of OSQP solver parameters.
+#' @param synergy_sign Direction of synergy: `"negative"` or `"positive"`.
+#' @param threshold Threshold for `area_synergy` statistics.
+#'
+#' @return A named list combining `theta_iso`, `theta_add`, `delta`,
+#'   `sse_iso`, `sse_add`, `t_int`, and the weighted summaries returned
+#'   by [interaction_summaries()].
+#'
+#' @seealso [sir_test()], [wild_bootstrap()],
+#'   [interaction_summaries()].
+#' @export
 interaction_fit <- function(barZ, w, direction, osqp_pars = list(),
                             synergy_sign = c("negative", "positive"), threshold = 0) {
   synergy_sign <- match.arg(synergy_sign)

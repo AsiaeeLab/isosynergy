@@ -1,2 +1,4 @@
-testthat::test_dir("tests/testthat")
+library(testthat)
+library(SIR)
 
+test_check("SIR")

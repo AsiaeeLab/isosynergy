@@ -1,3 +1,30 @@
+#' Monotone-Additive Surface Fit
+#'
+#' Fits the monotone-additive null surface
+#' \eqn{\theta_{ij} = \alpha + u_i + v_j}{theta_ij = alpha + u_i + v_j}
+#' to a weighted dose-response matrix, with `u` and `v` constrained to be
+#' monotone in the requested direction and to sum to zero (for
+#' identifiability). Solved as a sparse quadratic program via
+#' [osqp::osqp()].
+#'
+#' @param barZ Numeric matrix of (transformed) mean responses; rows
+#'   indexed by doses of drug A, columns by doses of drug B.
+#' @param w Numeric matrix of nonnegative weights, same dimensions as
+#'   `barZ`.
+#' @param direction Direction of monotonicity in dose: `"decreasing"`
+#'   (default) for viability data, `"increasing"` for inhibition data.
+#' @param osqp_pars Named list of OSQP solver parameters (see
+#'   [osqp::osqpSettings()]).
+#' @param ridge Small ridge added to the diagonal of the QP for numerical
+#'   stability.
+#'
+#' @return A list with components `theta` (the fitted I-by-J surface),
+#'   `alpha` (intercept), `u` (length-I row effects), `v` (length-J
+#'   column effects), `status` (OSQP solver status), and `objective`
+#'   (final objective value).
+#'
+#' @seealso [isotonic_2d_fit()], [interaction_fit()], [sir_test()].
+#' @export
 additive_ordered_fit <- function(barZ, w, direction = c("decreasing", "increasing"),
                                  osqp_pars = list(), ridge = 1e-9) {
   direction <- match.arg(direction)

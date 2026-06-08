@@ -215,7 +215,7 @@ drugcombdb_unit_to_uM <- function(x, unit) {
   unit <- tolower(unit)
   mult <- data.table::fifelse(unit %in% c("m", "mol", "molar"), 1e6,
     data.table::fifelse(unit %in% c("mm", "mmol"), 1e3,
-      data.table::fifelse(unit %in% c("um", "µm"), 1,
+      data.table::fifelse(unit %in% c("um", "\u00b5m"), 1,
         data.table::fifelse(unit %in% c("nm"), 1e-3,
           data.table::fifelse(unit %in% c("pm"), 1e-6, NA_real_)
         )

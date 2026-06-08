@@ -7,7 +7,32 @@ SIR defines interaction as the deviation from a monotone-additive null within a 
 **Paper:** A shape-constrained regression and wild bootstrap framework for reproducible drug synergy testing.
 Asiaee A, Long JP, Pal S, Pua HH, Coombes KR. *bioRxiv* (2026). [doi:10.1101/2026.02.05.704019](https://doi.org/10.1101/2026.02.05.704019)
 
-## Installation
+## Installation as an R package
+
+To install the methods exposed by this repository as a regular R package
+(the recommended path for downstream users):
+
+```r
+# install.packages("devtools")
+devtools::install_github("AsiaeeLab/SIR")
+```
+
+Once installed, the main entry point is `sir_test()`:
+
+```r
+library(SIR)
+set.seed(1)
+Z <- matrix(rnorm(36), 6, 6)
+fit <- sir_test(Z, B = 100, direction = "decreasing")
+fit$p_value
+plot(fit)
+```
+
+A worked walk-through is in the `getting-started` vignette
+(`vignette("getting-started", package = "SIR")`). For the full pipeline
+that reproduces the figures in the paper, follow the steps below.
+
+## Reproducing paper results: development install
 
 SIR requires R >= 4.1. Clone the repository and restore the package environment:
 

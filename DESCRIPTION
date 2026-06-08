@@ -1,0 +1,48 @@
+Package: SIR
+Title: Shape-Constrained Drug Synergy Testing via Isotonic Regression
+Version: 0.1.0
+Authors@R: c(
+    person("Amir", "Asiaee", , "amir.asiaeetaheri@vumc.org", role = c("aut", "cre")),
+    person("James P.", "Long", role = "aut"),
+    person("Samhita", "Pal", role = "aut"),
+    person("Heather H.", "Pua", role = "aut"),
+    person("Kevin R.", "Coombes", role = "aut"))
+Description: A nonparametric framework for drug combination synergy
+    testing. Interaction is defined as the deviation from a
+    monotone-additive null fit by two-dimensional isotonic regression on
+    a shared monotone surface. A degrees-of-freedom-corrected wild
+    bootstrap yields calibrated p-values and effect summaries for each
+    dose-response matrix, supporting principled hit calling and error
+    rate control in large drug combination screens.
+License: MIT + file LICENSE
+URL: https://github.com/AsiaeeLab/SIR
+BugReports: https://github.com/AsiaeeLab/SIR/issues
+Depends:
+    R (>= 4.1)
+Imports:
+    data.table,
+    Matrix,
+    osqp,
+    stats,
+    utils
+Suggests:
+    arrow,
+    digest,
+    dplyr,
+    future,
+    future.apply,
+    ggplot2,
+    knitr,
+    patchwork,
+    rmarkdown,
+    rprojroot,
+    scales,
+    synergyfinder,
+    testthat (>= 3.0.0),
+    tools,
+    yaml
+VignetteBuilder: knitr
+Config/testthat/edition: 3
+Encoding: UTF-8
+Roxygen: list(markdown = TRUE)
+RoxygenNote: 7.3.3

@@ -1,0 +1,879 @@
+<!DOCTYPE html>
+
+<html>
+
+<head>
+
+<meta charset="utf-8" />
+<meta name="generator" content="pandoc" />
+<meta http-equiv="X-UA-Compatible" content="IE=EDGE" />
+
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+
+
+
+<title>Getting started with SIR</title>
+
+<script>// Pandoc 2.9 adds attributes on both header and div. We remove the former (to
+// be compatible with the behavior of Pandoc < 2.8).
+document.addEventListener('DOMContentLoaded', function(e) {
+  var hs = document.querySelectorAll("div.section[class*='level'] > :first-child");
+  var i, h, a;
+  for (i = 0; i < hs.length; i++) {
+    h = hs[i];
+    if (!/^h[1-6]$/i.test(h.tagName)) continue;  // it should be a header h1-h6
+    a = h.attributes;
+    while (a.length > 0) h.removeAttribute(a[0].name);
+  }
+});
+</script>
+
+<style type="text/css">
+code{white-space: pre-wrap;}
+span.smallcaps{font-variant: small-caps;}
+span.underline{text-decoration: underline;}
+div.column{display: inline-block; vertical-align: top; width: 50%;}
+div.hanging-indent{margin-left: 1.5em; text-indent: -1.5em;}
+ul.task-list{list-style: none;}
+</style>
+
+
+
+<style type="text/css">
+code {
+white-space: pre;
+}
+.sourceCode {
+overflow: visible;
+}
+</style>
+<style type="text/css" data-origin="pandoc">
+pre > code.sourceCode { white-space: pre; position: relative; }
+pre > code.sourceCode > span { line-height: 1.25; }
+pre > code.sourceCode > span:empty { height: 1.2em; }
+.sourceCode { overflow: visible; }
+code.sourceCode > span { color: inherit; text-decoration: inherit; }
+div.sourceCode { margin: 1em 0; }
+pre.sourceCode { margin: 0; }
+@media screen {
+div.sourceCode { overflow: auto; }
+}
+@media print {
+pre > code.sourceCode { white-space: pre-wrap; }
+pre > code.sourceCode > span { text-indent: -5em; padding-left: 5em; }
+}
+pre.numberSource code
+{ counter-reset: source-line 0; }
+pre.numberSource code > span
+{ position: relative; left: -4em; counter-increment: source-line; }
+pre.numberSource code > span > a:first-child::before
+{ content: counter(source-line);
+position: relative; left: -1em; text-align: right; vertical-align: baseline;
+border: none; display: inline-block;
+-webkit-touch-callout: none; -webkit-user-select: none;
+-khtml-user-select: none; -moz-user-select: none;
+-ms-user-select: none; user-select: none;
+padding: 0 4px; width: 4em;
+color: #aaaaaa;
+}
+pre.numberSource { margin-left: 3em; border-left: 1px solid #aaaaaa; padding-left: 4px; }
+div.sourceCode
+{ }
+@media screen {
+pre > code.sourceCode > span > a:first-child::before { text-decoration: underline; }
+}
+code span.al { color: #ff0000; font-weight: bold; } 
+code span.an { color: #60a0b0; font-weight: bold; font-style: italic; } 
+code span.at { color: #7d9029; } 
+code span.bn { color: #40a070; } 
+code span.bu { color: #008000; } 
+code span.cf { color: #007020; font-weight: bold; } 
+code span.ch { color: #4070a0; } 
+code span.cn { color: #880000; } 
+code span.co { color: #60a0b0; font-style: italic; } 
+code span.cv { color: #60a0b0; font-weight: bold; font-style: italic; } 
+code span.do { color: #ba2121; font-style: italic; } 
+code span.dt { color: #902000; } 
+code span.dv { color: #40a070; } 
+code span.er { color: #ff0000; font-weight: bold; } 
+code span.ex { } 
+code span.fl { color: #40a070; } 
+code span.fu { color: #06287e; } 
+code span.im { color: #008000; font-weight: bold; } 
+code span.in { color: #60a0b0; font-weight: bold; font-style: italic; } 
+code span.kw { color: #007020; font-weight: bold; } 
+code span.op { color: #666666; } 
+code span.ot { color: #007020; } 
+code span.pp { color: #bc7a00; } 
+code span.sc { color: #4070a0; } 
+code span.ss { color: #bb6688; } 
+code span.st { color: #4070a0; } 
+code span.va { color: #19177c; } 
+code span.vs { color: #4070a0; } 
+code span.wa { color: #60a0b0; font-weight: bold; font-style: italic; } 
+</style>
+<script>
+// apply pandoc div.sourceCode style to pre.sourceCode instead
+(function() {
+  var sheets = document.styleSheets;
+  for (var i = 0; i < sheets.length; i++) {
+    if (sheets[i].ownerNode.dataset["origin"] !== "pandoc") continue;
+    try { var rules = sheets[i].cssRules; } catch (e) { continue; }
+    var j = 0;
+    while (j < rules.length) {
+      var rule = rules[j];
+      // check if there is a div.sourceCode rule
+      if (rule.type !== rule.STYLE_RULE || rule.selectorText !== "div.sourceCode") {
+        j++;
+        continue;
+      }
+      var style = rule.style.cssText;
+      // check if color or background-color is set
+      if (rule.style.color === '' && rule.style.backgroundColor === '') {
+        j++;
+        continue;
+      }
+      // replace div.sourceCode by a pre.sourceCode rule
+      sheets[i].deleteRule(j);
+      sheets[i].insertRule('pre.sourceCode{' + style + '}', j);
+    }
+  }
+})();
+</script>
+
+
+
+
+<style type="text/css">body {
+background-color: #fff;
+margin: 1em auto;
+max-width: 700px;
+overflow: visible;
+padding-left: 2em;
+padding-right: 2em;
+font-family: "Open Sans", "Helvetica Neue", Helvetica, Arial, sans-serif;
+font-size: 14px;
+line-height: 1.35;
+}
+#TOC {
+clear: both;
+margin: 0 0 10px 10px;
+padding: 4px;
+width: 400px;
+border: 1px solid #CCCCCC;
+border-radius: 5px;
+background-color: #f6f6f6;
+font-size: 13px;
+line-height: 1.3;
+}
+#TOC .toctitle {
+font-weight: bold;
+font-size: 15px;
+margin-left: 5px;
+}
+#TOC ul {
+padding-left: 40px;
+margin-left: -1.5em;
+margin-top: 5px;
+margin-bottom: 5px;
+}
+#TOC ul ul {
+margin-left: -2em;
+}
+#TOC li {
+line-height: 16px;
+}
+table {
+margin: 1em auto;
+border-width: 1px;
+border-color: #DDDDDD;
+border-style: outset;
+border-collapse: collapse;
+}
+table th {
+border-width: 2px;
+padding: 5px;
+border-style: inset;
+}
+table td {
+border-width: 1px;
+border-style: inset;
+line-height: 18px;
+padding: 5px 5px;
+}
+table, table th, table td {
+border-left-style: none;
+border-right-style: none;
+}
+table thead, table tr.even {
+background-color: #f7f7f7;
+}
+p {
+margin: 0.5em 0;
+}
+blockquote {
+background-color: #f6f6f6;
+padding: 0.25em 0.75em;
+}
+hr {
+border-style: solid;
+border: none;
+border-top: 1px solid #777;
+margin: 28px 0;
+}
+dl {
+margin-left: 0;
+}
+dl dd {
+margin-bottom: 13px;
+margin-left: 13px;
+}
+dl dt {
+font-weight: bold;
+}
+ul {
+margin-top: 0;
+}
+ul li {
+list-style: circle outside;
+}
+ul ul {
+margin-bottom: 0;
+}
+pre, code {
+background-color: #f7f7f7;
+border-radius: 3px;
+color: #333;
+white-space: pre-wrap; 
+}
+pre {
+border-radius: 3px;
+margin: 5px 0px 10px 0px;
+padding: 10px;
+}
+pre:not([class]) {
+background-color: #f7f7f7;
+}
+code {
+font-family: Consolas, Monaco, 'Courier New', monospace;
+font-size: 85%;
+}
+p > code, li > code {
+padding: 2px 0px;
+}
+div.figure {
+text-align: center;
+}
+img {
+background-color: #FFFFFF;
+padding: 2px;
+border: 1px solid #DDDDDD;
+border-radius: 3px;
+border: 1px solid #CCCCCC;
+margin: 0 5px;
+}
+h1 {
+margin-top: 0;
+font-size: 35px;
+line-height: 40px;
+}
+h2 {
+border-bottom: 4px solid #f7f7f7;
+padding-top: 10px;
+padding-bottom: 2px;
+font-size: 145%;
+}
+h3 {
+border-bottom: 2px solid #f7f7f7;
+padding-top: 10px;
+font-size: 120%;
+}
+h4 {
+border-bottom: 1px solid #f7f7f7;
+margin-left: 8px;
+font-size: 105%;
+}
+h5, h6 {
+border-bottom: 1px solid #ccc;
+font-size: 105%;
+}
+a {
+color: #0033dd;
+text-decoration: none;
+}
+a:hover {
+color: #6666ff; }
+a:visited {
+color: #800080; }
+a:visited:hover {
+color: #BB00BB; }
+a[href^="http:"] {
+text-decoration: underline; }
+a[href^="https:"] {
+text-decoration: underline; }
+
+code > span.kw { color: #555; font-weight: bold; } 
+code > span.dt { color: #902000; } 
+code > span.dv { color: #40a070; } 
+code > span.bn { color: #d14; } 
+code > span.fl { color: #d14; } 
+code > span.ch { color: #d14; } 
+code > span.st { color: #d14; } 
+code > span.co { color: #888888; font-style: italic; } 
+code > span.ot { color: #007020; } 
+code > span.al { color: #ff0000; font-weight: bold; } 
+code > span.fu { color: #900; font-weight: bold; } 
+code > span.er { color: #a61717; background-color: #e3d2d2; } 
+</style>
+
+
+
+
+</head>
+
+<body>
+
+
+
+
+<h1 class="title toc-ignore">Getting started with SIR</h1>
+
+
+
+<div class="sourceCode" id="cb1"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb1-1"><a href="#cb1-1" tabindex="-1"></a><span class="fu">library</span>(SIR)</span></code></pre></div>
+<div id="a-small-synthetic-example" class="section level2">
+<h2>A small synthetic example</h2>
+<p>We generate a small (6 by 6) dose-response matrix on a transformed
+scale, with a known synergistic bump in the middle of the grid. Rows
+index doses of drug A and columns doses of drug B.</p>
+<div class="sourceCode" id="cb2"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb2-1"><a href="#cb2-1" tabindex="-1"></a><span class="fu">set.seed</span>(<span class="dv">2026</span>)</span>
+<span id="cb2-2"><a href="#cb2-2" tabindex="-1"></a>I <span class="ot">&lt;-</span> <span class="dv">6</span><span class="dt">L</span>; J <span class="ot">&lt;-</span> <span class="dv">6</span><span class="dt">L</span></span>
+<span id="cb2-3"><a href="#cb2-3" tabindex="-1"></a></span>
+<span id="cb2-4"><a href="#cb2-4" tabindex="-1"></a><span class="co"># Monotone-decreasing single-agent effects, centered.</span></span>
+<span id="cb2-5"><a href="#cb2-5" tabindex="-1"></a>u <span class="ot">&lt;-</span> <span class="sc">-</span><span class="fu">cumsum</span>(<span class="fu">abs</span>(<span class="fu">rnorm</span>(I, <span class="at">mean =</span> <span class="fl">0.30</span>, <span class="at">sd =</span> <span class="fl">0.10</span>))); u <span class="ot">&lt;-</span> u <span class="sc">-</span> <span class="fu">mean</span>(u)</span>
+<span id="cb2-6"><a href="#cb2-6" tabindex="-1"></a>v <span class="ot">&lt;-</span> <span class="sc">-</span><span class="fu">cumsum</span>(<span class="fu">abs</span>(<span class="fu">rnorm</span>(J, <span class="at">mean =</span> <span class="fl">0.30</span>, <span class="at">sd =</span> <span class="fl">0.10</span>))); v <span class="ot">&lt;-</span> v <span class="sc">-</span> <span class="fu">mean</span>(v)</span>
+<span id="cb2-7"><a href="#cb2-7" tabindex="-1"></a></span>
+<span id="cb2-8"><a href="#cb2-8" tabindex="-1"></a><span class="co"># Additive null surface.</span></span>
+<span id="cb2-9"><a href="#cb2-9" tabindex="-1"></a>Z_add <span class="ot">&lt;-</span> <span class="fu">outer</span>(u, v, <span class="st">&quot;+&quot;</span>)</span>
+<span id="cb2-10"><a href="#cb2-10" tabindex="-1"></a></span>
+<span id="cb2-11"><a href="#cb2-11" tabindex="-1"></a><span class="co"># Negative bump at the centre of the grid -&gt; synergy under &quot;decreasing&quot; data.</span></span>
+<span id="cb2-12"><a href="#cb2-12" tabindex="-1"></a>ii <span class="ot">&lt;-</span> <span class="fu">seq_len</span>(I); jj <span class="ot">&lt;-</span> <span class="fu">seq_len</span>(J)</span>
+<span id="cb2-13"><a href="#cb2-13" tabindex="-1"></a>bump <span class="ot">&lt;-</span> <span class="fu">outer</span>(ii, jj, <span class="cf">function</span>(i, j) {</span>
+<span id="cb2-14"><a href="#cb2-14" tabindex="-1"></a>  <span class="fu">exp</span>(<span class="sc">-</span>((i <span class="sc">-</span> (I <span class="sc">+</span> <span class="dv">1</span>) <span class="sc">/</span> <span class="dv">2</span>)<span class="sc">^</span><span class="dv">2</span> <span class="sc">+</span> (j <span class="sc">-</span> (J <span class="sc">+</span> <span class="dv">1</span>) <span class="sc">/</span> <span class="dv">2</span>)<span class="sc">^</span><span class="dv">2</span>) <span class="sc">/</span> (<span class="dv">2</span> <span class="sc">*</span> <span class="fl">1.2</span><span class="sc">^</span><span class="dv">2</span>))</span>
+<span id="cb2-15"><a href="#cb2-15" tabindex="-1"></a>})</span>
+<span id="cb2-16"><a href="#cb2-16" tabindex="-1"></a>Z <span class="ot">&lt;-</span> Z_add <span class="sc">-</span> <span class="fl">0.30</span> <span class="sc">*</span> bump <span class="sc">+</span> <span class="fl">0.05</span> <span class="sc">*</span> <span class="fu">matrix</span>(<span class="fu">rnorm</span>(I <span class="sc">*</span> J), I, J)</span></code></pre></div>
+</div>
+<div id="running-the-sir-test" class="section level2">
+<h2>Running the SIR test</h2>
+<p>The convenient entry point is <code>sir_test()</code>. It fits both
+the monotone-additive null surface and a fully monotone two-dimensional
+isotonic surface, then computes a wild-bootstrap p-value against the
+additive null. We use a small bootstrap (<code>B = 100</code>) here so
+the vignette runs quickly; in practice values around 200 to 500 are
+typical.</p>
+<div class="sourceCode" id="cb3"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb3-1"><a href="#cb3-1" tabindex="-1"></a>fit <span class="ot">&lt;-</span> <span class="fu">sir_test</span>(</span>
+<span id="cb3-2"><a href="#cb3-2" tabindex="-1"></a>  Z,</span>
+<span id="cb3-3"><a href="#cb3-3" tabindex="-1"></a>  <span class="at">B =</span> <span class="dv">100</span>,</span>
+<span id="cb3-4"><a href="#cb3-4" tabindex="-1"></a>  <span class="at">direction =</span> <span class="st">&quot;decreasing&quot;</span>,</span>
+<span id="cb3-5"><a href="#cb3-5" tabindex="-1"></a>  <span class="at">synergy_sign =</span> <span class="st">&quot;negative&quot;</span>,</span>
+<span id="cb3-6"><a href="#cb3-6" tabindex="-1"></a>  <span class="at">stat =</span> <span class="st">&quot;S2&quot;</span>,</span>
+<span id="cb3-7"><a href="#cb3-7" tabindex="-1"></a>  <span class="at">seed =</span> <span class="dv">1</span></span>
+<span id="cb3-8"><a href="#cb3-8" tabindex="-1"></a>)</span>
+<span id="cb3-9"><a href="#cb3-9" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-10"><a href="#cb3-10" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-11"><a href="#cb3-11" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-12"><a href="#cb3-12" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-13"><a href="#cb3-13" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-14"><a href="#cb3-14" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-15"><a href="#cb3-15" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-16"><a href="#cb3-16" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-17"><a href="#cb3-17" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-18"><a href="#cb3-18" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-19"><a href="#cb3-19" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-20"><a href="#cb3-20" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-21"><a href="#cb3-21" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-22"><a href="#cb3-22" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-23"><a href="#cb3-23" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-24"><a href="#cb3-24" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-25"><a href="#cb3-25" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-26"><a href="#cb3-26" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-27"><a href="#cb3-27" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-28"><a href="#cb3-28" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-29"><a href="#cb3-29" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-30"><a href="#cb3-30" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-31"><a href="#cb3-31" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-32"><a href="#cb3-32" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-33"><a href="#cb3-33" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-34"><a href="#cb3-34" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-35"><a href="#cb3-35" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-36"><a href="#cb3-36" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-37"><a href="#cb3-37" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-38"><a href="#cb3-38" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-39"><a href="#cb3-39" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-40"><a href="#cb3-40" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-41"><a href="#cb3-41" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-42"><a href="#cb3-42" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-43"><a href="#cb3-43" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-44"><a href="#cb3-44" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-45"><a href="#cb3-45" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-46"><a href="#cb3-46" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-47"><a href="#cb3-47" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-48"><a href="#cb3-48" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-49"><a href="#cb3-49" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-50"><a href="#cb3-50" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-51"><a href="#cb3-51" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-52"><a href="#cb3-52" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-53"><a href="#cb3-53" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-54"><a href="#cb3-54" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-55"><a href="#cb3-55" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-56"><a href="#cb3-56" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-57"><a href="#cb3-57" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-58"><a href="#cb3-58" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-59"><a href="#cb3-59" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-60"><a href="#cb3-60" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-61"><a href="#cb3-61" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-62"><a href="#cb3-62" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-63"><a href="#cb3-63" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-64"><a href="#cb3-64" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-65"><a href="#cb3-65" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-66"><a href="#cb3-66" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-67"><a href="#cb3-67" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-68"><a href="#cb3-68" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-69"><a href="#cb3-69" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-70"><a href="#cb3-70" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-71"><a href="#cb3-71" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-72"><a href="#cb3-72" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-73"><a href="#cb3-73" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-74"><a href="#cb3-74" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-75"><a href="#cb3-75" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-76"><a href="#cb3-76" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-77"><a href="#cb3-77" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-78"><a href="#cb3-78" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-79"><a href="#cb3-79" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-80"><a href="#cb3-80" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-81"><a href="#cb3-81" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-82"><a href="#cb3-82" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-83"><a href="#cb3-83" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-84"><a href="#cb3-84" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-85"><a href="#cb3-85" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-86"><a href="#cb3-86" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-87"><a href="#cb3-87" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-88"><a href="#cb3-88" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-89"><a href="#cb3-89" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-90"><a href="#cb3-90" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-91"><a href="#cb3-91" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-92"><a href="#cb3-92" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-93"><a href="#cb3-93" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-94"><a href="#cb3-94" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-95"><a href="#cb3-95" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-96"><a href="#cb3-96" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-97"><a href="#cb3-97" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-98"><a href="#cb3-98" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-99"><a href="#cb3-99" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-100"><a href="#cb3-100" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-101"><a href="#cb3-101" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-102"><a href="#cb3-102" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-103"><a href="#cb3-103" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-104"><a href="#cb3-104" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-105"><a href="#cb3-105" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-106"><a href="#cb3-106" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-107"><a href="#cb3-107" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-108"><a href="#cb3-108" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-109"><a href="#cb3-109" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-110"><a href="#cb3-110" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-111"><a href="#cb3-111" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-112"><a href="#cb3-112" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-113"><a href="#cb3-113" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-114"><a href="#cb3-114" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-115"><a href="#cb3-115" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-116"><a href="#cb3-116" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-117"><a href="#cb3-117" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-118"><a href="#cb3-118" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-119"><a href="#cb3-119" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-120"><a href="#cb3-120" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-121"><a href="#cb3-121" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-122"><a href="#cb3-122" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-123"><a href="#cb3-123" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-124"><a href="#cb3-124" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-125"><a href="#cb3-125" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-126"><a href="#cb3-126" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-127"><a href="#cb3-127" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-128"><a href="#cb3-128" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-129"><a href="#cb3-129" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-130"><a href="#cb3-130" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-131"><a href="#cb3-131" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-132"><a href="#cb3-132" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-133"><a href="#cb3-133" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-134"><a href="#cb3-134" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-135"><a href="#cb3-135" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-136"><a href="#cb3-136" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-137"><a href="#cb3-137" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-138"><a href="#cb3-138" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-139"><a href="#cb3-139" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-140"><a href="#cb3-140" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-141"><a href="#cb3-141" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-142"><a href="#cb3-142" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-143"><a href="#cb3-143" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-144"><a href="#cb3-144" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-145"><a href="#cb3-145" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-146"><a href="#cb3-146" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-147"><a href="#cb3-147" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-148"><a href="#cb3-148" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-149"><a href="#cb3-149" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-150"><a href="#cb3-150" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-151"><a href="#cb3-151" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-152"><a href="#cb3-152" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-153"><a href="#cb3-153" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-154"><a href="#cb3-154" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-155"><a href="#cb3-155" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-156"><a href="#cb3-156" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-157"><a href="#cb3-157" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-158"><a href="#cb3-158" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-159"><a href="#cb3-159" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-160"><a href="#cb3-160" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-161"><a href="#cb3-161" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-162"><a href="#cb3-162" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-163"><a href="#cb3-163" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-164"><a href="#cb3-164" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-165"><a href="#cb3-165" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-166"><a href="#cb3-166" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-167"><a href="#cb3-167" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-168"><a href="#cb3-168" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-169"><a href="#cb3-169" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-170"><a href="#cb3-170" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-171"><a href="#cb3-171" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-172"><a href="#cb3-172" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-173"><a href="#cb3-173" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-174"><a href="#cb3-174" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-175"><a href="#cb3-175" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-176"><a href="#cb3-176" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-177"><a href="#cb3-177" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-178"><a href="#cb3-178" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-179"><a href="#cb3-179" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-180"><a href="#cb3-180" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-181"><a href="#cb3-181" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-182"><a href="#cb3-182" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-183"><a href="#cb3-183" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-184"><a href="#cb3-184" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-185"><a href="#cb3-185" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-186"><a href="#cb3-186" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-187"><a href="#cb3-187" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-188"><a href="#cb3-188" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-189"><a href="#cb3-189" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-190"><a href="#cb3-190" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-191"><a href="#cb3-191" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-192"><a href="#cb3-192" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-193"><a href="#cb3-193" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-194"><a href="#cb3-194" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-195"><a href="#cb3-195" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-196"><a href="#cb3-196" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-197"><a href="#cb3-197" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-198"><a href="#cb3-198" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-199"><a href="#cb3-199" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-200"><a href="#cb3-200" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-201"><a href="#cb3-201" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-202"><a href="#cb3-202" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-203"><a href="#cb3-203" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-204"><a href="#cb3-204" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-205"><a href="#cb3-205" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-206"><a href="#cb3-206" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-207"><a href="#cb3-207" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-208"><a href="#cb3-208" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-209"><a href="#cb3-209" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-210"><a href="#cb3-210" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-211"><a href="#cb3-211" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-212"><a href="#cb3-212" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-213"><a href="#cb3-213" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-214"><a href="#cb3-214" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-215"><a href="#cb3-215" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-216"><a href="#cb3-216" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-217"><a href="#cb3-217" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-218"><a href="#cb3-218" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-219"><a href="#cb3-219" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-220"><a href="#cb3-220" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-221"><a href="#cb3-221" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-222"><a href="#cb3-222" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-223"><a href="#cb3-223" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-224"><a href="#cb3-224" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-225"><a href="#cb3-225" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-226"><a href="#cb3-226" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-227"><a href="#cb3-227" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-228"><a href="#cb3-228" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-229"><a href="#cb3-229" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-230"><a href="#cb3-230" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-231"><a href="#cb3-231" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-232"><a href="#cb3-232" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-233"><a href="#cb3-233" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-234"><a href="#cb3-234" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-235"><a href="#cb3-235" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-236"><a href="#cb3-236" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-237"><a href="#cb3-237" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-238"><a href="#cb3-238" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-239"><a href="#cb3-239" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-240"><a href="#cb3-240" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-241"><a href="#cb3-241" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-242"><a href="#cb3-242" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-243"><a href="#cb3-243" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-244"><a href="#cb3-244" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-245"><a href="#cb3-245" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-246"><a href="#cb3-246" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-247"><a href="#cb3-247" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-248"><a href="#cb3-248" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-249"><a href="#cb3-249" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-250"><a href="#cb3-250" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-251"><a href="#cb3-251" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-252"><a href="#cb3-252" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-253"><a href="#cb3-253" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-254"><a href="#cb3-254" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-255"><a href="#cb3-255" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-256"><a href="#cb3-256" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-257"><a href="#cb3-257" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-258"><a href="#cb3-258" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-259"><a href="#cb3-259" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-260"><a href="#cb3-260" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-261"><a href="#cb3-261" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-262"><a href="#cb3-262" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-263"><a href="#cb3-263" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-264"><a href="#cb3-264" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-265"><a href="#cb3-265" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-266"><a href="#cb3-266" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-267"><a href="#cb3-267" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-268"><a href="#cb3-268" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-269"><a href="#cb3-269" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-270"><a href="#cb3-270" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-271"><a href="#cb3-271" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-272"><a href="#cb3-272" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-273"><a href="#cb3-273" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-274"><a href="#cb3-274" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-275"><a href="#cb3-275" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-276"><a href="#cb3-276" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-277"><a href="#cb3-277" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-278"><a href="#cb3-278" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-279"><a href="#cb3-279" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-280"><a href="#cb3-280" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-281"><a href="#cb3-281" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-282"><a href="#cb3-282" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-283"><a href="#cb3-283" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-284"><a href="#cb3-284" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-285"><a href="#cb3-285" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-286"><a href="#cb3-286" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-287"><a href="#cb3-287" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-288"><a href="#cb3-288" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-289"><a href="#cb3-289" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-290"><a href="#cb3-290" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-291"><a href="#cb3-291" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-292"><a href="#cb3-292" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-293"><a href="#cb3-293" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-294"><a href="#cb3-294" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-295"><a href="#cb3-295" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-296"><a href="#cb3-296" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-297"><a href="#cb3-297" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-298"><a href="#cb3-298" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-299"><a href="#cb3-299" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-300"><a href="#cb3-300" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-301"><a href="#cb3-301" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-302"><a href="#cb3-302" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-303"><a href="#cb3-303" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-304"><a href="#cb3-304" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-305"><a href="#cb3-305" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-306"><a href="#cb3-306" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-307"><a href="#cb3-307" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-308"><a href="#cb3-308" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-309"><a href="#cb3-309" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-310"><a href="#cb3-310" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-311"><a href="#cb3-311" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-312"><a href="#cb3-312" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-313"><a href="#cb3-313" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-314"><a href="#cb3-314" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-315"><a href="#cb3-315" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-316"><a href="#cb3-316" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-317"><a href="#cb3-317" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-318"><a href="#cb3-318" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-319"><a href="#cb3-319" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-320"><a href="#cb3-320" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-321"><a href="#cb3-321" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-322"><a href="#cb3-322" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-323"><a href="#cb3-323" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-324"><a href="#cb3-324" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-325"><a href="#cb3-325" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-326"><a href="#cb3-326" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-327"><a href="#cb3-327" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-328"><a href="#cb3-328" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-329"><a href="#cb3-329" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-330"><a href="#cb3-330" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-331"><a href="#cb3-331" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-332"><a href="#cb3-332" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-333"><a href="#cb3-333" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-334"><a href="#cb3-334" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-335"><a href="#cb3-335" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-336"><a href="#cb3-336" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-337"><a href="#cb3-337" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-338"><a href="#cb3-338" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-339"><a href="#cb3-339" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-340"><a href="#cb3-340" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-341"><a href="#cb3-341" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-342"><a href="#cb3-342" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-343"><a href="#cb3-343" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-344"><a href="#cb3-344" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-345"><a href="#cb3-345" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-346"><a href="#cb3-346" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-347"><a href="#cb3-347" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-348"><a href="#cb3-348" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-349"><a href="#cb3-349" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-350"><a href="#cb3-350" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-351"><a href="#cb3-351" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-352"><a href="#cb3-352" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-353"><a href="#cb3-353" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-354"><a href="#cb3-354" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-355"><a href="#cb3-355" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-356"><a href="#cb3-356" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-357"><a href="#cb3-357" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-358"><a href="#cb3-358" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-359"><a href="#cb3-359" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-360"><a href="#cb3-360" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-361"><a href="#cb3-361" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-362"><a href="#cb3-362" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-363"><a href="#cb3-363" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-364"><a href="#cb3-364" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-365"><a href="#cb3-365" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-366"><a href="#cb3-366" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-367"><a href="#cb3-367" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-368"><a href="#cb3-368" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-369"><a href="#cb3-369" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-370"><a href="#cb3-370" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-371"><a href="#cb3-371" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-372"><a href="#cb3-372" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-373"><a href="#cb3-373" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-374"><a href="#cb3-374" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-375"><a href="#cb3-375" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-376"><a href="#cb3-376" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-377"><a href="#cb3-377" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-378"><a href="#cb3-378" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-379"><a href="#cb3-379" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-380"><a href="#cb3-380" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-381"><a href="#cb3-381" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-382"><a href="#cb3-382" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-383"><a href="#cb3-383" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-384"><a href="#cb3-384" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-385"><a href="#cb3-385" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-386"><a href="#cb3-386" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-387"><a href="#cb3-387" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-388"><a href="#cb3-388" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-389"><a href="#cb3-389" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-390"><a href="#cb3-390" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-391"><a href="#cb3-391" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-392"><a href="#cb3-392" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-393"><a href="#cb3-393" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-394"><a href="#cb3-394" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-395"><a href="#cb3-395" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-396"><a href="#cb3-396" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-397"><a href="#cb3-397" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-398"><a href="#cb3-398" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-399"><a href="#cb3-399" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-400"><a href="#cb3-400" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-401"><a href="#cb3-401" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-402"><a href="#cb3-402" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-403"><a href="#cb3-403" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-404"><a href="#cb3-404" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-405"><a href="#cb3-405" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-406"><a href="#cb3-406" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-407"><a href="#cb3-407" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-408"><a href="#cb3-408" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-409"><a href="#cb3-409" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-410"><a href="#cb3-410" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-411"><a href="#cb3-411" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-412"><a href="#cb3-412" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-413"><a href="#cb3-413" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-414"><a href="#cb3-414" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-415"><a href="#cb3-415" tabindex="-1"></a><span class="co">#&gt; Warning: ! Using `model$Solve()` is deprecated for &lt;OSQP_Model&gt; objects.</span></span>
+<span id="cb3-416"><a href="#cb3-416" tabindex="-1"></a><span class="co">#&gt; ℹ Use `model@Solve()` instead.</span></span>
+<span id="cb3-417"><a href="#cb3-417" tabindex="-1"></a></span>
+<span id="cb3-418"><a href="#cb3-418" tabindex="-1"></a>fit</span>
+<span id="cb3-419"><a href="#cb3-419" tabindex="-1"></a><span class="co">#&gt; SIR (Synergy via Isotonic Regression) test</span></span>
+<span id="cb3-420"><a href="#cb3-420" tabindex="-1"></a><span class="co">#&gt;   Grid:           6 x 6</span></span>
+<span id="cb3-421"><a href="#cb3-421" tabindex="-1"></a><span class="co">#&gt;   Direction:      decreasing (synergy = negative)</span></span>
+<span id="cb3-422"><a href="#cb3-422" tabindex="-1"></a><span class="co">#&gt;   Statistic:      S2</span></span>
+<span id="cb3-423"><a href="#cb3-423" tabindex="-1"></a><span class="co">#&gt;   S2 (energy):    0.08168</span></span>
+<span id="cb3-424"><a href="#cb3-424" tabindex="-1"></a><span class="co">#&gt;   Observed stat:  0.08168</span></span>
+<span id="cb3-425"><a href="#cb3-425" tabindex="-1"></a><span class="co">#&gt;   Bootstrap B:    100</span></span>
+<span id="cb3-426"><a href="#cb3-426" tabindex="-1"></a><span class="co">#&gt;   p-value:        0.0693</span></span></code></pre></div>
+<p>A more detailed view is provided by <code>summary()</code>:</p>
+<div class="sourceCode" id="cb4"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb4-1"><a href="#cb4-1" tabindex="-1"></a><span class="fu">summary</span>(fit)</span>
+<span id="cb4-2"><a href="#cb4-2" tabindex="-1"></a><span class="co">#&gt; SIR test summary</span></span>
+<span id="cb4-3"><a href="#cb4-3" tabindex="-1"></a><span class="co">#&gt;   Grid:            6 x 6</span></span>
+<span id="cb4-4"><a href="#cb4-4" tabindex="-1"></a><span class="co">#&gt;   Direction:       decreasing</span></span>
+<span id="cb4-5"><a href="#cb4-5" tabindex="-1"></a><span class="co">#&gt;   Synergy sign:    negative</span></span>
+<span id="cb4-6"><a href="#cb4-6" tabindex="-1"></a><span class="co">#&gt;   Test statistic:  S2 (residual scale: none)</span></span>
+<span id="cb4-7"><a href="#cb4-7" tabindex="-1"></a><span class="co">#&gt;   Bootstrap B:     100</span></span>
+<span id="cb4-8"><a href="#cb4-8" tabindex="-1"></a><span class="co">#&gt; </span></span>
+<span id="cb4-9"><a href="#cb4-9" tabindex="-1"></a><span class="co">#&gt; Interaction energies (weighted):</span></span>
+<span id="cb4-10"><a href="#cb4-10" tabindex="-1"></a><span class="co">#&gt;   S2:              0.08168</span></span>
+<span id="cb4-11"><a href="#cb4-11" tabindex="-1"></a><span class="co">#&gt;   S2_plus:         0.04126</span></span>
+<span id="cb4-12"><a href="#cb4-12" tabindex="-1"></a><span class="co">#&gt;   S2_minus:        0.04042</span></span>
+<span id="cb4-13"><a href="#cb4-13" tabindex="-1"></a><span class="co">#&gt;   Synergy index:   -0.010</span></span>
+<span id="cb4-14"><a href="#cb4-14" tabindex="-1"></a><span class="co">#&gt;   Max synergy:     0.1124</span></span>
+<span id="cb4-15"><a href="#cb4-15" tabindex="-1"></a><span class="co">#&gt;   Max antagonism:  0.1111</span></span>
+<span id="cb4-16"><a href="#cb4-16" tabindex="-1"></a><span class="co">#&gt; </span></span>
+<span id="cb4-17"><a href="#cb4-17" tabindex="-1"></a><span class="co">#&gt; Observed stat:    0.08168</span></span>
+<span id="cb4-18"><a href="#cb4-18" tabindex="-1"></a><span class="co">#&gt; p-value:           0.0693</span></span></code></pre></div>
+</div>
+<div id="inspecting-the-interaction-surface" class="section level2">
+<h2>Inspecting the interaction surface</h2>
+<p>The fitted interaction surface
+<code>delta = theta_iso - theta_add</code> is returned in
+<code>fit$delta</code>. Negative values indicate synergy under
+viability-style data:</p>
+<div class="sourceCode" id="cb5"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb5-1"><a href="#cb5-1" tabindex="-1"></a><span class="fu">round</span>(fit<span class="sc">$</span>delta, <span class="dv">3</span>)</span>
+<span id="cb5-2"><a href="#cb5-2" tabindex="-1"></a><span class="co">#&gt;        [,1]   [,2]   [,3]   [,4]   [,5]   [,6]</span></span>
+<span id="cb5-3"><a href="#cb5-3" tabindex="-1"></a><span class="co">#&gt; [1,] -0.024 -0.016  0.024  0.037  0.057 -0.080</span></span>
+<span id="cb5-4"><a href="#cb5-4" tabindex="-1"></a><span class="co">#&gt; [2,] -0.018  0.029  0.040 -0.005 -0.047  0.001</span></span>
+<span id="cb5-5"><a href="#cb5-5" tabindex="-1"></a><span class="co">#&gt; [3,] -0.052  0.013  0.003 -0.054  0.062  0.027</span></span>
+<span id="cb5-6"><a href="#cb5-6" tabindex="-1"></a><span class="co">#&gt; [4,]  0.111 -0.010 -0.112 -0.057 -0.040  0.108</span></span>
+<span id="cb5-7"><a href="#cb5-7" tabindex="-1"></a><span class="co">#&gt; [5,]  0.020 -0.008  0.023  0.039 -0.016  0.018</span></span>
+<span id="cb5-8"><a href="#cb5-8" tabindex="-1"></a><span class="co">#&gt; [6,] -0.037 -0.008  0.023  0.039 -0.016 -0.075</span></span></code></pre></div>
+<p>A heatmap of the interaction surface is the default plot:</p>
+<div class="sourceCode" id="cb6"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb6-1"><a href="#cb6-1" tabindex="-1"></a><span class="fu">plot</span>(fit)</span></code></pre></div>
+<p><img src="data:image/png;base64,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" /><!-- --></p>
+</div>
+<div id="comparing-against-classical-baselines" class="section level2">
+<h2>Comparing against classical baselines</h2>
+<p>SIR also exposes the four most common synergy baselines, useful for
+sanity-checking and methods comparisons. They consume long-format
+dose-response tables:</p>
+<div class="sourceCode" id="cb7"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb7-1"><a href="#cb7-1" tabindex="-1"></a>df <span class="ot">&lt;-</span> <span class="fu">data.frame</span>(</span>
+<span id="cb7-2"><a href="#cb7-2" tabindex="-1"></a>  <span class="at">doseA =</span> <span class="fu">rep</span>(<span class="fu">seq_len</span>(I), <span class="at">times =</span> J),</span>
+<span id="cb7-3"><a href="#cb7-3" tabindex="-1"></a>  <span class="at">doseB =</span> <span class="fu">rep</span>(<span class="fu">seq_len</span>(J), <span class="at">each =</span> I),</span>
+<span id="cb7-4"><a href="#cb7-4" tabindex="-1"></a>  <span class="at">response =</span> <span class="fu">pmax</span>(<span class="dv">0</span>, <span class="fu">pmin</span>(<span class="dv">1</span>, <span class="fu">plogis</span>(<span class="fu">as.numeric</span>(Z)))),</span>
+<span id="cb7-5"><a href="#cb7-5" tabindex="-1"></a>  <span class="at">replicate =</span> <span class="st">&quot;1&quot;</span></span>
+<span id="cb7-6"><a href="#cb7-6" tabindex="-1"></a>)</span>
+<span id="cb7-7"><a href="#cb7-7" tabindex="-1"></a></span>
+<span id="cb7-8"><a href="#cb7-8" tabindex="-1"></a>bliss <span class="ot">&lt;-</span> <span class="fu">bliss_score</span>(df, <span class="at">response_mode =</span> <span class="st">&quot;viability&quot;</span>)</span>
+<span id="cb7-9"><a href="#cb7-9" tabindex="-1"></a>hsa   <span class="ot">&lt;-</span> <span class="fu">hsa_score</span>(df, <span class="at">response_mode =</span> <span class="st">&quot;viability&quot;</span>)</span>
+<span id="cb7-10"><a href="#cb7-10" tabindex="-1"></a></span>
+<span id="cb7-11"><a href="#cb7-11" tabindex="-1"></a><span class="fu">dim</span>(bliss<span class="sc">$</span>synergy)</span>
+<span id="cb7-12"><a href="#cb7-12" tabindex="-1"></a><span class="co">#&gt; [1] 6 6</span></span>
+<span id="cb7-13"><a href="#cb7-13" tabindex="-1"></a><span class="fu">dim</span>(hsa<span class="sc">$</span>synergy)</span>
+<span id="cb7-14"><a href="#cb7-14" tabindex="-1"></a><span class="co">#&gt; [1] 6 6</span></span></code></pre></div>
+<p>For full details on each helper, see
+<code>?additive_ordered_fit</code>, <code>?isotonic_2d_fit</code>,
+<code>?wild_bootstrap</code>, and
+<code>?interaction_summaries</code>.</p>
+</div>
+
+
+
+<!-- code folding -->
+
+
+<!-- dynamically load mathjax for compatibility with self-contained -->
+<script>
+  (function () {
+    var script = document.createElement("script");
+    script.type = "text/javascript";
+    script.src  = "https://mathjax.rstudio.com/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML";
+    document.getElementsByTagName("head")[0].appendChild(script);
+  })();
+</script>
+
+</body>
+</html>

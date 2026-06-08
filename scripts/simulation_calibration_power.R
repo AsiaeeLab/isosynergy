@@ -16,6 +16,7 @@ if (!is.null(script_path)) {
 suppressPackageStartupMessages({
   library(optparse)
   library(data.table)
+  library(arrow)
   library(ggplot2)
   library(patchwork)
 })
@@ -49,7 +50,11 @@ option_list <- list(
   make_option("--delta-values", type = "character", default = "0,0.8,1.2,1.4,1.6,1.8",
               help = "Comma-separated interaction strengths (bump amplitudes)", metavar = "list"),
   make_option("--boot-B", type = "integer", default = 200L,
-              help = "Bootstrap replicates per simulation", metavar = "int")
+              help = "Bootstrap replicates per simulation", metavar = "int"),
+  make_option("--replot-only", action = "store_true", default = FALSE,
+              help = "Skip recompute; read precomputed null/power parquet and only redraw the figure"),
+  make_option("--out-fig", type = "character", default = NA_character_,
+              help = "Output figure PDF (defaults to <figures>/public/simulation_calibration_power.pdf)", metavar = "path")
 )
 
 opt <- parse_args(OptionParser(option_list = option_list))
@@ -67,6 +72,58 @@ dir_create(fig_dir)
 delta_values <- as.numeric(strsplit(opt$`delta-values`, ",", fixed = TRUE)[[1]])
 delta_values <- delta_values[is.finite(delta_values)]
 if (length(delta_values) == 0) stop("No valid --delta-values provided.")
+
+# DKW band for uniform(0,1)
+ecdf_band <- function(p, alpha = 0.05, m) {
+  eps <- sqrt(log(2 / alpha) / (2 * m))
+  data.table(p = p, lo = pmax(0, p - eps), hi = pmin(1, p + eps))
+}
+alpha_test <- 0.05
+
+if (opt$`replot-only`) {
+  null_p <- file.path(out_results, "simulation_null_pvals.parquet")
+  power_p <- file.path(out_results, "simulation_power_pvals.parquet")
+  if (!file.exists(null_p)) stop("Missing: ", null_p)
+  if (!file.exists(power_p)) stop("Missing: ", power_p)
+  null_dt <- as.data.table(read_parquet(null_p))
+  power_dt <- as.data.table(read_parquet(power_p))
+  message("[", now_utc(), "] Replot-only from: ", null_p, " and ", power_p)
+
+  m <- nrow(null_dt)
+  grid_p <- seq(0, 1, length.out = 200)
+  band <- ecdf_band(grid_p, alpha = 0.05, m = m)
+
+  p_cal <- ggplot(null_dt, aes(x = p_value)) +
+    stat_ecdf(geom = "step", color = "#0C6291") +
+    geom_ribbon(data = band, aes(x = p, ymin = lo, ymax = hi), fill = "#F28C28", alpha = 0.2, inherit.aes = FALSE) +
+    geom_abline(intercept = 0, slope = 1, linetype = "dashed") +
+    labs(title = "Null p-value distribution", x = "p-value", y = "ECDF") +
+    theme_minimal(base_size = 11)
+
+  pow_summ <- power_dt[, {
+    p <- mean(p_value <= alpha_test, na.rm = TRUE)
+    .(power = p, se = sqrt(p * (1 - p) / .N),
+      true_max_abs_delta = mean(true_max_abs_delta, na.rm = TRUE), n = .N)
+  }, by = .(delta)]
+
+  p_pow <- ggplot(pow_summ, aes(x = delta, y = power)) +
+    geom_hline(yintercept = alpha_test, linetype = "dashed", color = "gray50") +
+    geom_ribbon(aes(ymin = pmax(0, power - 1.96 * se), ymax = pmin(1, power + 1.96 * se)),
+                fill = "steelblue", alpha = 0.2) +
+    geom_line(color = "steelblue", linewidth = 1) +
+    geom_point(color = "steelblue", size = 2) +
+    scale_y_continuous(limits = c(0, 1), labels = scales::percent) +
+    labs(title = "Power curve", x = expression("Interaction strength (" * delta * ")"), y = "Power") +
+    theme_minimal(base_size = 11)
+
+  out_fig <- if (is.na(opt$`out-fig`)) file.path(fig_dir, "simulation_calibration_power.pdf") else opt$`out-fig`
+  dir_create(dirname(out_fig))
+  # Two panels side by side (landscape) for panel (B) of the two-up float.
+  ggsave(out_fig, p_cal | p_pow, width = 11, height = 4.4)
+  message("[", now_utc(), "] Wrote: ", out_fig)
+  message("[", now_utc(), "] Done.")
+  quit(save = "no", status = 0)
+}
 
 response_mode <- "viability"
 direction <- "decreasing"
@@ -218,11 +275,13 @@ p_pow <- ggplot(pow_summ, aes(x = delta, y = power)) +
   geom_line(color = "steelblue", linewidth = 1) +
   geom_point(color = "steelblue", size = 2) +
   scale_y_continuous(limits = c(0, 1), labels = scales::percent) +
-  labs(title = "Power curve", x = "Interaction strength (δ)", y = "Power") +
+  labs(title = "Power curve", x = expression("Interaction strength (" * delta * ")"), y = "Power") +
   theme_minimal(base_size = 11)
 
-out_fig <- file.path(fig_dir, "simulation_calibration_power.pdf")
-ggsave(out_fig, p_cal / p_pow, width = 6, height = 8)
+out_fig <- if (is.na(opt$`out-fig`)) file.path(fig_dir, "simulation_calibration_power.pdf") else opt$`out-fig`
+dir_create(dirname(out_fig))
+# Two panels side by side (landscape) for panel (B) of the two-up float.
+ggsave(out_fig, p_cal | p_pow, width = 11, height = 4.4)
 message("[", now_utc(), "] Wrote: ", out_fig)
 
 message("[", now_utc(), "] Done.")

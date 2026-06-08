@@ -1,33 +1,25 @@
-source("R/utils.R")
-source("R/cache.R")
-source("R/config.R")
-source("R/transforms.R")
-source("R/matrix_stats.R")
-source("R/osqp_helpers.R")
-source("R/isotonic_2d.R")
-source("R/additive_ordered.R")
-source("R/interaction.R")
-source("R/bootstrap.R")
-source("R/baselines_common.R")
-source("R/baselines_bliss.R")
-source("R/baselines_hsa.R")
-source("R/baselines_loewe.R")
-source("R/baselines_zip.R")
-source("R/simulation.R")
-source("R/metrics.R")
-source("R/experiments_simulation.R")
-source("R/experiments_perturbation.R")
-source("R/data_standard.R")
-source("R/public_data_ingest.R")
-source("R/experiments_public.R")
-source("R/viz_public.R")
-source("R/experiments_clinical.R")
-source("R/viz_clinical.R")
-source("R/experiments_reproducibility.R")
-source("R/viz_reproducibility.R")
-source("R/viz_surfaces.R")
-source("R/viz_simulation.R")
-source("R/viz_perturbation.R")
+# Pipeline driver. When this file is loaded as part of the SIR package, the
+# `source()` calls below are no-ops because R/ does not exist relative to the
+# install/load directory. When the file is sourced directly from the repo
+# root (e.g., by scripts/run_pipeline.R), the calls chain-load all helpers.
+local({
+  files <- c(
+    "R/utils.R", "R/cache.R", "R/config.R", "R/transforms.R",
+    "R/matrix_stats.R", "R/osqp_helpers.R", "R/isotonic_2d.R",
+    "R/additive_ordered.R", "R/interaction.R", "R/bootstrap.R",
+    "R/baselines_common.R", "R/baselines_bliss.R", "R/baselines_hsa.R",
+    "R/baselines_loewe.R", "R/baselines_zip.R", "R/simulation.R",
+    "R/metrics.R", "R/experiments_simulation.R",
+    "R/experiments_perturbation.R", "R/data_standard.R",
+    "R/public_data_ingest.R", "R/experiments_public.R", "R/viz_public.R",
+    "R/experiments_clinical.R", "R/viz_clinical.R",
+    "R/experiments_reproducibility.R", "R/viz_reproducibility.R",
+    "R/viz_surfaces.R", "R/viz_simulation.R", "R/viz_perturbation.R"
+  )
+  if (all(file.exists(files))) {
+    for (f in files) source(f)
+  }
+})
 
 run_pipeline <- function(cfg, steps = c("all")) {
   out_results <- cfg$project$out_dir_results %||% "results"

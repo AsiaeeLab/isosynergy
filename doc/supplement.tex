@@ -26,7 +26,7 @@
 \affil*[1]{\orgdiv{Department of Biostatistics}, \orgname{Vanderbilt University Medical Center}, \orgaddress{\city{Nashville}, \state{TN}, \postcode{37232}, \country{USA}}}
 \affil[2]{\orgdiv{Department of Biostatistics}, \orgname{The University of Texas MD Anderson Cancer Center}, \orgaddress{\city{Houston}, \state{TX}, \postcode{77030}, \country{USA}}}
 \affil[3]{\orgdiv{Department of Pathology, Microbiology and Immunology}, \orgname{Vanderbilt University Medical Center}, \orgaddress{\city{Nashville}, \state{TN}, \postcode{37232}, \country{USA}}}
-\affil[4]{\orgdiv{Department of Population Health Sciences}, \orgname{Georgia Cancer Center, Augusta University}, \orgaddress{\city{Augusta}, \state{GA}, \postcode{30912}, \country{USA}}}
+\affil[4]{\orgdiv{Department of Biostatistics, Data Science, and Epidemiology}, \orgname{Georgia Cancer Center, Augusta University}, \orgaddress{\city{Augusta}, \state{GA}, \postcode{30912}, \country{USA}}}
 
 \maketitle
 
@@ -165,6 +165,15 @@ This pattern is consistent with measurement noise rather than systematic non-mon
   \label{fig:s1_monotonicity}
 \end{figure}
 
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=\linewidth]{\detokenize{baseline_pairwise_scatter.pdf}}
+  \caption{\textbf{Pairwise scatterplots of baseline synergy scores on DrugCombDB} (5{,}000 randomly subsampled matrices).
+  Each panel shows one method's matrix-level summary score against another; the dashed diagonal is the identity line.
+  The near-linear Bliss--ZIP relationship (top right) confirms their high correlation ($r=0.92$), while the Loewe--ZIP and Loewe--Bliss panels reveal broad clouds with many sign-discordant points (opposite quadrants), explaining the low correlations ($r\approx 0.3$) and high sign disagreement rates reported in Fig.~1 of the main text.}
+  \label{fig:s4_pairwise_scatter}
+\end{figure}
+
 \section{Supplementary Discussion: baseline disagreement metrics}
 
 To quantify the extent to which different synergy scoring methods agree on which drug combinations are synergistic, we computed three complementary metrics across all DrugCombDB dose-response matrices with valid (non-NA) scores for all four baseline methods.
@@ -236,6 +245,28 @@ On 120 NCI-ALMANAC matrices subjected to the pseudo-null procedure (sign-flippin
   The dashed diagonal is the Uniform(0,1) reference; the shaded region is a 95\% Dvoretzky--Kiefer--Wolfowitz band.
   The close agreement with the uniform diagonal (median p-value 0.493) confirms that SIR's calibration, demonstrated on DrugCombDB in the main text (Fig.~3), generalizes to an independent dataset with different experimental protocols and dose-response characteristics.}
   \label{fig:s3_nci_calibration}
+\end{figure}
+
+\section{Supplementary Note 3: alternatives to the wild bootstrap considered and ruled out}
+
+Before adopting the per-matrix wild bootstrap, we evaluated three alternatives that would have been cheaper or yielded a closed form, and ruled each out for principled reasons traceable to the same geometry. We summarize them here; full derivations and numerical checks accompany the code repository.
+
+\paragraph{(i) Closed-form chi-bar-squared null.} For order-restricted tests of a linear \emph{subspace} nested in a cone, the likelihood-ratio statistic follows a chi-bar-squared mixture. This does not transfer to SIR: the additive-monotone set $\mathcal{A}$ is a genuine \emph{cone}, not a subspace, so the projection $P_\mathcal{A}$ is nonlinear, the Pythagorean reduction $S^2=\mathrm{SSE}_\mathcal{A}-\mathrm{SSE}_\mathcal{M}$ fails (the cross term $\langle Z-P_\mathcal{M},\,P_\mathcal{M}-P_\mathcal{A}\rangle$ is nonzero), and $S^2$ is not a central chi-bar-squared (the conditional means $\mathbb{E}[S^2\mid\text{active dim}=l]$ are flat rather than equal to $l$). No off-the-shelf closed form applies.
+
+\paragraph{(ii) A shared, surface-free Monte-Carlo reference.} Under equal weights $S^2/\sigma^2$ is pivotal in the grid size $(I,J)$, suggesting a single reference distribution per geometry computed at the cone vertex. This is anticonservative: the null law of $S^2/\sigma^2$ depends on where the true additive surface lies in the cone. At a steep monotone surface---the generic case for real dose--response data---the constraints are slack and the null $S^2$ is far larger than at the vertex (on $5\times5$ grids, $\mathbb{E}[S^2/\sigma^2]$ rises from $\approx 1.4$ at the vertex to $\approx 11.6$ at a steep interior surface). A vertex-anchored shared reference rejects the majority of true nulls. A calibrated null must therefore be anchored per matrix at the fitted surface---which is precisely the wild bootstrap.
+
+\paragraph{(iii) Independent filtering to reduce the multiple-testing burden.} Filtering the testing family to ``signal-rich'' matrices preserves false-discovery-rate control only if the filter covariate is independent of the test p-value under the null. The natural covariate---the additive main-effect dynamic range---fails this (Spearman $\approx-0.17$ with the null p-value), because steeper surfaces sit deeper in the cone interior where the null $S^2$ inflates, the same mechanism as in (ii). Filtering on it would invalidate FDR control.
+
+Together these establish that a per-matrix resampling null anchored at the fitted additive surface is required, and that the bootstrap's $1/(B+1)$ resolution floor is properly overcome by increasing the number of resamples on candidate matrices (main text, \emph{Adaptive resampling}), not by an analytic shortcut.
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=\linewidth]{\detokenize{baseline_concordance.pdf}}
+  \caption{\textbf{SIR discoveries concord with heuristic synergy scores in location but not in ranking.}
+  (\textbf{A}) Distribution of each baseline matrix-level synergy score for SIR's FDR-significant hits (red) versus non-hits (grey) across DrugCombDB; SIR hits are strongly enriched for high baseline synergy for all four methods (Mann--Whitney $p<10^{-200}$ each), confirming that SIR's calibrated discoveries lie where the heuristics also see synergy.
+  (\textbf{B}) Per-cell-line Jaccard overlap between SIR's hits and the top 5\% of matrices by each baseline score, for the signal-rich cell lines; the overlap is uniformly low ($\sim$0.05), showing that SIR substantially re-ranks which specific pairs clear formal error control rather than reproducing any single score.
+  Baseline scores follow the SynergyFinder convention (positive $=$ synergy).}
+  \label{fig:concordance}
 \end{figure}
 
 \bibliography{references}

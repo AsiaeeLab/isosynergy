@@ -1,3 +1,24 @@
+#' Two-Dimensional Isotonic Regression Fit
+#'
+#' Fits a fully monotone (in both row and column dimensions) surface to a
+#' weighted dose-response matrix, by solving a sparse quadratic program
+#' via [osqp::osqp()].
+#'
+#' @param barZ Numeric matrix of (transformed) mean responses.
+#' @param w Numeric matrix of nonnegative weights, same dimensions as
+#'   `barZ`.
+#' @param direction Direction of monotonicity: `"decreasing"` (default)
+#'   for viability data, `"increasing"` for inhibition data.
+#' @param osqp_pars Named list of OSQP solver parameters.
+#' @param ridge Small ridge added to the diagonal of the QP for numerical
+#'   stability.
+#'
+#' @return A list with components `theta` (the fitted I-by-J surface),
+#'   `status` (OSQP solver status), and `objective` (final objective
+#'   value).
+#'
+#' @seealso [additive_ordered_fit()], [sir_test()].
+#' @export
 isotonic_2d_fit <- function(barZ, w, direction = c("decreasing", "increasing"),
                             osqp_pars = list(), ridge = 1e-9) {
   direction <- match.arg(direction)

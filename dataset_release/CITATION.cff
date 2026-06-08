@@ -1,0 +1,36 @@
+cff-version: 1.2.0
+message: "If you use this dataset, please cite the Zenodo record and the SIR method paper."
+type: dataset
+title: "SIR-derived synergy calls for DrugCombDB"
+version: "0.1.0"
+date-released: "2026-05-08"
+license: CC-BY-4.0
+doi: 10.5281/zenodo.TBD
+url: "https://doi.org/10.5281/zenodo.TBD"
+authors:
+  - family-names: Asiaee
+    given-names: Amir
+  - family-names: Long
+    given-names: James P.
+  - family-names: Pal
+    given-names: Samhita
+  - family-names: Pua
+    given-names: Heather H.
+  - family-names: Coombes
+    given-names: Kevin R.
+preferred-citation:
+  type: article
+  title: "A shape-constrained regression and wild bootstrap framework for reproducible drug synergy testing"
+  doi: 10.1101/2026.02.05.704019
+  year: 2026
+  authors:
+    - family-names: Asiaee
+      given-names: Amir
+    - family-names: Long
+      given-names: James P.
+    - family-names: Pal
+      given-names: Samhita
+    - family-names: Pua
+      given-names: Heather H.
+    - family-names: Coombes
+      given-names: Kevin R.

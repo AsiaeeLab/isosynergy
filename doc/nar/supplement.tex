@@ -1,0 +1,291 @@
+% Supplementary Information for NAR submission (single-column, journal-agnostic).
+
+\documentclass[11pt]{article}
+
+\usepackage[a4paper,margin=1in]{geometry}
+\usepackage{graphicx}
+\usepackage{amsmath,amssymb}
+\usepackage{booktabs}
+\usepackage{natbib}
+\usepackage{url}
+\usepackage{hyperref}
+
+\graphicspath{{figures/}}
+
+% Numbering: keep plain arabic; the existing \figurename = "Supplementary Fig." renders as "Supplementary Fig. 1, 2, ..."
+% so main-text "Supplementary Fig. N" references continue to match.
+
+\title{Supplementary Information for:\\ A shape-constrained regression and wild bootstrap framework for reproducible drug synergy testing}
+\author{Amir Asiaee, James P. Long, Samhita Pal, Heather H. Pua, Kevin R. Coombes}
+\date{}
+
+\begin{document}
+\maketitle
+
+\section*{Supplementary Methods}
+
+\section{Model-consistent definition of interaction}
+
+This section provides the formal definitions underlying the SIR interaction surface introduced in the main text.
+The key idea is that both the null model (no interaction) and the alternative model (unrestricted interaction) are defined within the same class of monotone functions, so that any detected interaction reflects a genuine departure from additivity rather than an artifact of comparing models with different structural assumptions.
+
+Let $Z\in\mathbb{R}^{I\times J}$ denote transformed responses on an $I\times J$ dose grid and $w_{ij}\ge 0$ denote weights.
+Let $\mathcal{M}$ be the set of monotone surfaces (for viability, non-increasing in each coordinate) and let $\mathcal{A}\subset\mathcal{M}$ be the monotone-additive class
+$\theta_{ij}=\alpha+u_i+v_j$, where $u_i$ and $v_j$ are each constrained to be monotone non-increasing, with identifiability constraints $u_1=0$ and $v_1=0$ to prevent trading constants between the intercept $\alpha$ and the marginal effects.
+We define the isotonic and additive estimators as weighted projections:
+\begin{align}
+\hat\theta^{\mathrm{iso}} &= \arg\min_{\theta\in\mathcal{M}}\sum_{i,j} w_{ij}(Z_{ij}-\theta_{ij})^2,\\
+\hat\theta^{\mathrm{add}} &= \arg\min_{\theta\in\mathcal{A}}\sum_{i,j} w_{ij}(Z_{ij}-\theta_{ij})^2.
+\end{align}
+The interaction surface is
+\begin{equation}
+\delta=\hat\theta^{\mathrm{iso}}-\hat\theta^{\mathrm{add}}.
+\end{equation}
+This definition is \emph{model-consistent}: interaction is defined as the component of the best monotone fit that cannot be explained by the best monotone-additive fit, within the same constrained geometry.
+
+\paragraph{Why the weighted mean interaction is zero.}
+Both $\hat\theta^{\mathrm{iso}}$ and $\hat\theta^{\mathrm{add}}$ are translation-invariant projections: if $\theta\in\mathcal{M}$ (or $\mathcal{A}$), then $\theta+c\mathbf{1}$ is feasible for any constant $c$.
+With a squared-error objective, translation invariance implies that both projections preserve the weighted mean of $Z$, and therefore $\sum_{ij} w_{ij}\delta_{ij}=0$.
+Consequently, interaction can be mixed-sign even for strongly synergistic combinations; directional summaries should therefore avoid relying on the signed mean of $\delta$.
+
+\section{Global and directional summaries}
+
+\paragraph{Global interaction energy.}
+We summarize interaction magnitude with the weighted energy
+\begin{equation}
+S^2=\sum_{i,j} w_{ij}\delta_{ij}^2,
+\end{equation}
+and report either the normalized mean energy $S^2/\sum w$ or a studentized version $S^2/\mathrm{SSE}_{\mathrm{add}}$ for inference, where
+$\mathrm{SSE}_{\mathrm{add}}=\sum_{i,j} w_{ij}(Z_{ij}-\hat\theta^{\mathrm{add}}_{ij})^2$.
+The default test statistic throughout this paper is $T = S^2/\sum_{ij} w_{ij}$; the studentized alternative is noted for completeness but is not used in any reported results.
+
+\paragraph{Directional energies and a bounded direction index.}
+For viability, synergy corresponds to $\delta_{ij}<0$.
+Define one-sided energies
+\begin{equation}
+S^2_{-}=\sum_{i,j} w_{ij}\max(-\delta_{ij},0)^2,\qquad
+S^2_{+}=\sum_{i,j} w_{ij}\max(\delta_{ij},0)^2.
+\end{equation}
+We summarize direction by the bounded index
+\begin{equation}
+I_{\mathrm{syn}}=\frac{S^2_{-}-S^2_{+}}{S^2_{-}+S^2_{+}}\in[-1,1],
+\end{equation}
+where values near $+1$ indicate predominantly synergy-like interaction (negative deviations for viability), values near $-1$ indicate antagonism-like interaction, and values near $0$ indicate mixed-sign interaction.
+
+\paragraph{Sequential inference and multiplicity.}
+The global test based on $S^2$ (or $S^2/\mathrm{SSE}_{\mathrm{add}}$) answers ``does interaction exist?'' and is inherently two-sided.
+Directional inference can be performed after rejecting the global null using a step-down procedure: first test interaction at level $\alpha$; only if rejected, test direction using a pre-specified directional statistic (e.g., $I_{\mathrm{syn}}$ or $S^2_{-}-S^2_{+}$) with an appropriate bootstrap reference.
+Because directional testing is only performed after the global test has confirmed that interaction exists, the global test acts as a gatekeeper: it controls the overall false-positive rate without requiring a separate multiple-testing correction for the directional step.
+This is analogous to only examining individual regression coefficients after a global F-test has rejected the null that all coefficients are zero.
+
+\section{Degrees-of-freedom correction in the wild bootstrap}
+
+The wild bootstrap generates pseudo-data under the fitted null:
+\begin{equation}
+Z^\star_{ij}=\hat\theta^{\mathrm{add}}_{ij}+\xi_{ij}\tilde r_{ij},\qquad
+\xi_{ij}\in\{-1,+1\}\ \text{i.i.d.},\qquad
+\tilde r_{ij}=r_{ij}\cdot s,
+\end{equation}
+where $r_{ij}=Z_{ij}-\hat\theta^{\mathrm{add}}_{ij}$ are null residuals and $s$ is a residual scaling factor.
+Because $\hat\theta^{\mathrm{add}}$ is estimated from the same data, residuals are shrunk relative to the true noise variance.
+We therefore inflate residuals by a degrees-of-freedom (df) factor
+\begin{equation}
+s=\sqrt{\frac{n_{\mathrm{eff}}}{n_{\mathrm{eff}}-df_{\mathrm{null}}}},
+\end{equation}
+where $n_{\mathrm{eff}}$ is the number of finite, positively weighted grid cells and $df_{\mathrm{null}}$ is the effective degrees of freedom consumed by the monotone-additive fit.
+
+Unlike linear regression, where degrees of freedom equals the fixed number of parameters, isotonic regression pools adjacent dose levels that violate monotonicity into tied groups, so its effective df depends on the data.
+If the observed marginal responses are already monotone, each dose level retains its own fitted value and df is large; if they are highly non-monotone, many levels are pooled and df is small.
+We approximate $df_{\mathrm{null}}$ by counting the number of distinct fitted levels in the monotone main effects $\hat u$ and $\hat v$.
+This approximation is analogous to counting the number of free parameters in a piecewise-constant fit: each group of dose levels that share the same fitted value acts as one free parameter, so the total df is approximately the number of such groups across both margins.
+See \cite{Wu1986} for wild bootstrap foundations.
+
+\section{Simulation study design}
+
+We constructed simulated dose-response data as follows.
+
+\paragraph{Null surface generation.}
+For each simulation replicate, we drew monotone row effects $u_1 \ge u_2 \ge \cdots \ge u_8$ and column effects $v_1 \ge v_2 \ge \cdots \ge v_8$ independently from standard normal distributions and then sorted them to enforce monotonicity.
+An intercept $\alpha$ was drawn from $\mathrm{Uniform}(1,3)$ to place the surface at biologically plausible viability levels.
+The null surface is $\theta^{\mathrm{add}}_{ij} = \alpha + u_i + v_j$ on the logit scale.
+
+\paragraph{Interaction injection.}
+To generate alternatives, we added a localized bump centered at the middle of the $8\times 8$ grid.
+The bump amplitude at each cell is $A \cdot \exp\!\bigl(-\|(i,j)-\mathrm{center}\|^2 / (2\sigma^2)\bigr)$, where $A$ is the interaction strength parameter, $\mathrm{center}=(4.5, 4.5)$, and $\sigma = 2$.
+The bump is then projected onto the monotone cone $\mathcal{M}$ to ensure that the resulting surface remains feasible under the alternative model; this makes the alternative \emph{model-consistent} (interaction is detectable by $\delta = \hat\theta^{\mathrm{iso}} - \hat\theta^{\mathrm{add}}$).
+
+\paragraph{Observed data.}
+Gaussian noise $\varepsilon_{ij} \sim \mathcal{N}(0, \sigma^2_\varepsilon)$ with $\sigma_\varepsilon = 0.1$ (on the logit scale) was added to each cell of the surface to generate observed $Z_{ij}$.
+No replicates were simulated ($m_{ij}=1$, uniform weights).
+
+\paragraph{Simulation grid.}
+Interaction strengths $A \in \{0, 0.8, 1.2, 1.4, 1.6, 1.8\}$ were used.
+At $A=0$ (the null), we ran $n=200$ independent replicate simulations to obtain a precise empirical CDF for the Type~I error check (Fig.~4, top panel, in the main text).
+At each of the five positive strengths ($A > 0$), we ran $n=30$ replicates and measured the rejection rate at $\alpha=0.05$ to estimate power (Fig.~4, bottom panel).
+All simulations used $B=200$ bootstrap resamples.
+
+\section{Dataset-scale monotonicity diagnostics}
+
+SIR assumes that the dose-response surface is monotone (non-increasing in each drug's dose for viability endpoints).
+This assumption is biologically motivated by the expectation that higher drug concentrations should not decrease killing, but it may be violated in practice by measurement noise or genuine non-monotone phenomena such as hormesis.
+To assess how often and how severely monotonicity is violated in real screening data, we computed diagnostic statistics on DrugCombDB.
+
+\paragraph{Diagnostic definition.}
+For each matrix, we check every pair of adjacent dose levels along each drug's axis (holding the other drug's dose fixed) and record whether viability increases rather than decreases with dose.
+For a $5\times 5$ grid, there are $(5-1)\times 5=20$ such adjacent comparisons per axis; for a $4\times 4$ grid, $(4-1)\times 4=12$.
+We report the fraction of these comparisons that violate monotonicity along drug A ($f_A$) and drug B ($f_B$), as well as the maximum magnitude of any violation ($m$) in viability units.
+We summarize each matrix by $f_{\mathrm{joint}}=(f_A+f_B)/2$ and $m=\max(m_A,m_B)$.
+
+\paragraph{Empirical results on DrugCombDB.}
+On a random sample of 5{,}000 DrugCombDB matrices (3{,}538 of size $4\times 4$ and 1{,}462 of size $5\times 5$), the median violation fraction was $f_A=f_B=0.25$, meaning roughly one in four adjacent comparisons shows a reversal.
+In concrete terms, a typical $5\times 5$ matrix has about 5 violations out of 20 adjacent pairs per axis, and a typical $4\times 4$ matrix about 3 out of 12.
+Crucially, these violations are small in magnitude: the median maximum adjacent violation was only 0.081 in viability units (90th percentile 0.219; 95th percentile 0.298), and 61.2\% (87.9\%) of matrices had maximum adjacent violation $\le 0.1$ ($\le 0.2$).
+This pattern is consistent with measurement noise rather than systematic non-monotone biology: genuine hormesis or biphasic effects would produce large, consistent reversals across multiple dose pairs, not the scattered small fluctuations observed here.
+
+\renewcommand{\figurename}{Supplementary Fig.}
+\setcounter{figure}{0}
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=\linewidth]{\detokenize{monotonicity_diagnostics_drugcombdb.pdf}}
+  \caption{\textbf{Monotonicity violation frequency and magnitude on DrugCombDB} (5{,}000 randomly sampled matrices).
+  Top row: empirical CDFs of the fraction of adjacent dose comparisons that violate monotonicity along each drug's dose axis.
+  Bottom left: joint distribution of violation fractions across both axes.
+  Bottom right: empirical CDF of the maximum adjacent violation magnitude on the viability scale; dashed lines at 0.1 and 0.2 viability units for reference.
+  Violations are frequent (median fraction $\approx$0.25 per axis) but small in magnitude (median maximum violation 0.081; 90th percentile 0.219), consistent with measurement noise rather than systematic non-monotone biology.
+  These results support monotone regression as a pragmatic default; the small fraction of matrices with large violations ($<$5\% exceed 0.3) can be flagged for inspection or alternative modeling.}
+  \label{fig:s1_monotonicity}
+\end{figure}
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=\linewidth]{\detokenize{baseline_pairwise_scatter.pdf}}
+  \caption{\textbf{Pairwise scatterplots of baseline synergy scores on DrugCombDB} (5{,}000 randomly subsampled matrices).
+  Each panel shows one method's matrix-level summary score against another; the dashed diagonal is the identity line.
+  The near-linear Bliss--ZIP relationship (top right) confirms their high correlation ($r=0.92$), while the Loewe--ZIP and Loewe--Bliss panels reveal broad clouds with many sign-discordant points (opposite quadrants), explaining the low correlations ($r\approx 0.3$) and high sign disagreement rates reported in Fig.~1 of the main text.}
+  \label{fig:s4_pairwise_scatter}
+\end{figure}
+
+\section{Supplementary Discussion: baseline disagreement metrics}
+
+To quantify the extent to which different synergy scoring methods agree on which drug combinations are synergistic, we computed three complementary metrics across all DrugCombDB dose-response matrices with valid (non-NA) scores for all four baseline methods.
+
+\textbf{Pearson correlation.} For each pair of methods, we computed the Pearson correlation between their matrix-level summary scores across all matrices.
+High correlation indicates that the two methods rank drug pairs similarly; low correlation indicates that the methods capture fundamentally different aspects of the dose-response landscape or define additivity differently.
+
+\textbf{Sign disagreement rate.} For each pair of methods, we computed the fraction of matrices for which exactly one method reports positive synergy (score $>0$) while the other reports antagonism (score $<0$).
+This captures qualitative disagreement: the methods not only rank differently but reach opposite conclusions about the direction of interaction.
+
+\textbf{Top-hit overlap.} For each pair of methods, we identified the top $q=5\%$ most synergistic matrices by each method's score, then computed the Jaccard index (intersection over union) between these hit sets.
+Low overlap means that the two methods would prioritize different drug pairs for experimental follow-up, with direct consequences for resource allocation in screening campaigns.
+
+These summaries complement per-dose-point disagreement by quantifying instability at the level of global hit calling, which is the primary output of most synergy screening workflows.
+
+\section{Supplementary Note 1: software and reproducibility}
+
+The SIR software and all analysis code are available at \texttt{https://github.com/AsiaeeLab/isosynergy}.
+The repository contains the R source code implementing the SIR framework (isotonic regression, monotone-additive fitting, wild bootstrap testing), baseline method implementations (Bliss, HSA, Loewe, ZIP), visualization functions, and the complete set of scripts used to generate every figure and table in this manuscript.
+
+All analyses are driven by YAML configuration files (e.g., \texttt{configs/default.yaml}) that specify transform parameters, bootstrap settings, and output directories, ensuring that results are fully reproducible from a single configuration.
+The constrained regression problems (isotonic and monotone-additive fits) are solved as convex quadratic programs using OSQP \cite{Stellato2020}.
+Intermediate results are stored as Parquet files, enabling exact reproduction of reported summary statistics without rerunning the full pipeline.
+The repository README provides step-by-step instructions for downloading the required datasets, restoring the R environment, and reproducing all results.
+
+\section{Supplementary Note 2: transform sensitivity}
+
+The null hypothesis of monotone additivity is defined on the scale determined by the response transform.
+Different transforms (identity on raw viability, logit, asinh, log) induce different notions of ``additivity'' and therefore different interaction surfaces and p-values.
+This is not a weakness of SIR but a fundamental property of any interaction test: the notion of ``no interaction'' depends on the scale.
+
+For example, under the identity transform (raw viability), ``additive'' means that drug effects sum in viability units: if drug A reduces viability by 0.2 and drug B by 0.3, the combination is expected to reduce it by 0.5.
+Under the logit transform, ``additive'' means effects sum on the log-odds scale, which compresses near the boundaries (0 and 1) and produces a different expected combination surface.
+A drug pair that significantly departs from additivity on one scale may be consistent with additivity on another.
+On a single example matrix, changing the transform from identity to logit changed the p-value from $p\approx 0.01$ to $p\approx 0.20$, not because the method is unstable, but because the two transforms define different null hypotheses and the data are consistent with additivity on the log-odds scale but not on the raw viability scale.
+
+We recommend the logit link as a principled default for viability data because it maps $[0,1]$ to $\mathbb{R}$, stabilizes variance near the boundaries, and defines additivity on a scale where equal increments correspond to equal log-odds changes in cell survival.
+When the appropriate scale is uncertain, we recommend reporting results under two or more transforms as a sensitivity analysis.
+The accompanying code repository provides a detailed exploration of transform effects on fitted surfaces, interaction maps, and bootstrap p-values.
+
+\section{NCI-ALMANAC replication}
+
+To assess generalizability beyond DrugCombDB, we repeated the baseline disagreement and pseudo-null calibration analyses on NCI-ALMANAC \cite{Holbeck2017}, a large-scale combination screen from the National Cancer Institute.
+
+\paragraph{Baseline disagreement.}
+On a sample of 1{,}918 NCI-ALMANAC matrices with valid (non-NA) scores for all four baselines, Bliss and ZIP correlate near-perfectly ($r>0.99$), while Loewe disagrees strongly with all other methods: sign disagreement rates of 38--43\% and top-5\% Jaccard overlaps as low as 0.06 (Supplementary Fig.~\ref{fig:s2_nci_disagreement}).
+These patterns replicate and amplify the fragmentation observed on DrugCombDB (Fig.~1 of the main text).
+Notably, Loewe fails (non-finite output) on 97\% of NCI-ALMANAC experiments, compared to 20.9\% on DrugCombDB, reflecting the more challenging dose--response landscape of this dataset.
+
+\paragraph{Pseudo-null calibration.}
+On 120 NCI-ALMANAC matrices subjected to the pseudo-null procedure (sign-flipping df-corrected residuals, $B=200$), the resulting p-values are approximately uniform (Supplementary Fig.~\ref{fig:s3_nci_calibration}; median p-value 0.493), confirming proper calibration on an independent dataset.
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=\linewidth]{\detokenize{baseline_disagreement_nci_almanac.pdf}}
+  \caption{\textbf{Baseline synergy score disagreement on NCI-ALMANAC} ($n=1{,}918$ matrices with valid scores for all four methods).
+  Top: Pearson correlations of matrix-level summary scores.
+  Middle: fraction of matrices where only one method reports positive synergy.
+  Bottom: Jaccard overlap of top 5\% synergy calls.
+  The disagreement pattern replicates and amplifies the DrugCombDB results (main text Fig.~1): Bliss and ZIP are near-identical ($r>0.99$), while Loewe disagrees with all other methods ($r\approx 0$, Jaccard overlap 0.06), reflecting the fundamentally different dose-equivalence assumption.}
+  \label{fig:s2_nci_disagreement}
+\end{figure}
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=\linewidth]{\detokenize{pseudonull_calibration_nci_almanac.pdf}}
+  \caption{\textbf{Pseudo-null p-value distribution on NCI-ALMANAC} ($n=120$ matrices; $B=200$).
+  P-values from the df-corrected wild bootstrap when data are generated under the fitted additive null by sign-flipping corrected residuals, so that no true interaction is present by construction.
+  The dashed diagonal is the Uniform(0,1) reference; the shaded region is a 95\% Dvoretzky--Kiefer--Wolfowitz band.
+  The close agreement with the uniform diagonal (median p-value 0.493) confirms that SIR's calibration, demonstrated on DrugCombDB in the main text (Fig.~3), generalizes to an independent dataset with different experimental protocols and dose-response characteristics.}
+  \label{fig:s3_nci_calibration}
+\end{figure}
+
+\section{Supplementary Note 3: alternatives to the wild bootstrap considered and ruled out}
+
+Before adopting the per-matrix wild bootstrap, we evaluated three alternatives that would have been cheaper or yielded a closed form, and ruled each out for principled reasons traceable to the same geometry. We summarize them here; full derivations and numerical checks accompany the code repository.
+
+\paragraph{(i) Closed-form chi-bar-squared null.} For order-restricted tests of a linear \emph{subspace} nested in a cone, the likelihood-ratio statistic follows a chi-bar-squared mixture. This does not transfer to SIR: the additive-monotone set $\mathcal{A}$ is a genuine \emph{cone}, not a subspace, so the projection $P_\mathcal{A}$ is nonlinear, the Pythagorean reduction $S^2=\mathrm{SSE}_\mathcal{A}-\mathrm{SSE}_\mathcal{M}$ fails (the cross term $\langle Z-P_\mathcal{M},\,P_\mathcal{M}-P_\mathcal{A}\rangle$ is nonzero), and $S^2$ is not a central chi-bar-squared (the conditional means $\mathbb{E}[S^2\mid\text{active dim}=l]$ are flat rather than equal to $l$). No off-the-shelf closed form applies.
+
+\paragraph{(ii) A shared, surface-free Monte-Carlo reference.} Under equal weights $S^2/\sigma^2$ is pivotal in the grid size $(I,J)$, suggesting a single reference distribution per geometry computed at the cone vertex. This is anticonservative: the null law of $S^2/\sigma^2$ depends on where the true additive surface lies in the cone. At a steep monotone surface---the generic case for real dose--response data---the constraints are slack and the null $S^2$ is far larger than at the vertex (on $5\times5$ grids, $\mathbb{E}[S^2/\sigma^2]$ rises from $\approx 1.4$ at the vertex to $\approx 11.6$ at a steep interior surface). A vertex-anchored shared reference rejects the majority of true nulls. A calibrated null must therefore be anchored per matrix at the fitted surface---which is precisely the wild bootstrap.
+
+\paragraph{(iii) Independent filtering to reduce the multiple-testing burden.} Filtering the testing family to ``signal-rich'' matrices preserves false-discovery-rate control only if the filter covariate is independent of the test p-value under the null. The natural covariate (the additive main-effect dynamic range) fails this (Spearman $\approx-0.17$ with the null p-value), because steeper surfaces sit deeper in the cone interior where the null $S^2$ inflates, the same mechanism as in (ii). Filtering on it would invalidate FDR control.
+
+Together these establish that a per-matrix resampling null anchored at the fitted additive surface is required, and that the bootstrap's $1/(B+1)$ resolution floor is properly overcome by increasing the number of resamples on candidate matrices (main text, \emph{Adaptive resampling}), not by an analytic shortcut.
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=\linewidth]{\detokenize{baseline_concordance.pdf}}
+  \caption{\textbf{SIR discoveries concord with heuristic synergy scores in location but not in ranking.}
+  (\textbf{A}) Distribution of each baseline matrix-level synergy score for SIR's FDR-significant hits (red) versus non-hits (grey) across DrugCombDB; SIR hits are strongly enriched for high baseline synergy for all four methods (Mann--Whitney $p<10^{-200}$ each), confirming that SIR's calibrated discoveries lie where the heuristics also see synergy.
+  (\textbf{B}) Per-cell-line Jaccard overlap between SIR's hits and the top 5\% of matrices by each baseline score, for the signal-rich cell lines; the overlap is uniformly low ($\sim$0.05), showing that SIR substantially re-ranks which specific pairs clear formal error control rather than reproducing any single score.
+  Baseline scores follow the SynergyFinder convention (positive $=$ synergy).}
+  \label{fig:concordance}
+\end{figure}
+
+\section{Supplementary Note 4: per-drug FDR control as a complementary stratification}
+
+The main text controls FDR within each cell line, treating the cell line as the natural screening unit.
+A complementary, drug-centric stratification is to control FDR within each drug's family, defined as all matrices containing that drug (across its partner drugs and across cell lines).
+This answers a different question, ``for drug $X$, which of its partner combinations are synergistic?'', useful when prioritizing combination partners for a drug already under development.
+The two stratifications produce different but coherent answers: drug families overlap (each matrix belongs to two drug families, one per constituent drug), so a matrix can be a discovery in one drug's family but not the other; we report a matrix as per-drug-significant if it clears within-family Benjamini--Hochberg ($\alpha=0.05$) in at least one of its two families.
+
+Applied to the same $B=20{,}000$ p-values (\emph{Adaptive resampling}), the per-drug procedure flags 6{,}396 matrices in total, comparable to the 5{,}260 from the per-cell-line procedure.
+Drug-family sizes are large (median 4{,}863; maximum 11{,}741), so the bootstrap-resolution floor $B \ge N/(\alpha R)$ binds for the largest families; the chosen $B=20{,}000$ is at the edge of what those families can resolve, consistent with the modest gain over the per-cell-line tally.
+
+Notably, the same concentration pattern observed across cell lines (18 of 90 cell lines carry all discoveries) recurs across drugs: only 18 of 125 drugs in DrugCombDB have any per-drug FDR-significant matrix (Supplementary Fig.~\ref{fig:per_drug}).
+The top contributors are dominated by broadly active agents and DNA-damage/cell-cycle inhibitors (Dinaciclib, Vinorelbine, MK-8776, Geldanamycin, Bortezomib), consistent with classes that have many documented synergistic partners.
+Pooling across cell lines does dilute context, however: a drug's synergy may be confined to specific cellular backgrounds (consistent with the per-cell-line localization), so a small per-drug count does not imply absence of synergy for that drug in some cell lines.
+We therefore retain the per-cell-line stratification as the primary analysis and present the per-drug results here as a partner-prioritization view.
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=0.9\linewidth]{\detokenize{per_drug_synergy_partners.pdf}}
+  \caption{\textbf{Per-drug FDR-significant matrices on DrugCombDB} (top 20 of 125 drugs; Benjamini--Hochberg within each drug's family, $\alpha=0.05$, $B=20{,}000$).
+  Each bar shows the number of FDR-significant drug-pair/cell-line matrices for the indicated drug; the annotation reports hits over family size.
+  Discoveries concentrate in 18 of 125 drugs, paralleling the 18-of-90 concentration observed across cell lines.}
+  \label{fig:per_drug}
+\end{figure}
+
+\bibliographystyle{unsrtnat}
+\bibliography{references}
+
+\end{document}

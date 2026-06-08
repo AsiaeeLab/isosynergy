@@ -54,6 +54,25 @@ fit_4pl_inhibition <- function(dose, inhib, eps = 1e-6) {
   }
 }
 
+#' ZIP (Zero Interaction Potency) Synergy Surface
+#'
+#' Computes the ZIP synergy surface, optionally using 4-parameter
+#' logistic fits of the marginal single-agent inhibition curves. The
+#' expected inhibition is `a + b - a*b` applied cell-wise.
+#'
+#' @param df_long Long-format dose-response data frame with columns
+#'   `doseA`, `doseB`, `response`.
+#' @param response_mode Either `"viability"` or `"inhibition"`.
+#' @param use_curvefit Logical: when `TRUE` (default), fit 4-parameter
+#'   logistic curves to the marginal single-agent inhibition; when
+#'   `FALSE`, use the empirical edge values directly.
+#'
+#' @return A list with components `synergy`, `expected`, `observed`,
+#'   `doseA_levels`, `doseB_levels`.
+#'
+#' @seealso [zip_score()] (alias), [bliss_synergy()], [hsa_synergy()],
+#'   [loewe_synergy()].
+#' @export
 zip_synergy <- function(df_long, response_mode, use_curvefit = TRUE) {
   grid <- matrix_mean_response(df_long, response_mode = response_mode)
   Y_norm <- normalize_to_control(grid$Y)

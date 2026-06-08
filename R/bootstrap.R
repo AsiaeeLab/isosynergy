@@ -1,3 +1,44 @@
+#' Wild Bootstrap p-Value for Drug Synergy Testing
+#'
+#' Refits the monotone-additive null and the fully monotone isotonic
+#' surface, computes residuals from the null fit, and resamples them
+#' using Rademacher wild-bootstrap weights to build the null distribution
+#' of the chosen test statistic. Returns the observed statistic, the
+#' bootstrap reference distribution, and the resulting p-value.
+#'
+#' @param barZ Numeric matrix of (transformed) mean responses.
+#' @param w Numeric matrix of nonnegative weights, same dimensions as
+#'   `barZ`.
+#' @param direction Direction of monotonicity (`"decreasing"` or
+#'   `"increasing"`).
+#' @param B Integer number of wild-bootstrap resamples.
+#' @param seed Integer seed used for reproducible bootstrap draws.
+#' @param osqp_pars Named list of OSQP solver parameters.
+#' @param n_cores Integer number of parallel workers.
+#' @param use_parallel Logical: when `TRUE` and `n_cores > 1`, parallelise
+#'   the bootstrap via [future::plan()]/[future.apply::future_sapply()].
+#' @param stat Test statistic. Options include `"t_int"` (default),
+#'   `"t_int_norm"`, `"S2"`, `"S2_norm"`, `"Splus"`, `"Sminus"`,
+#'   `"S2_plus"`, `"S2_minus"`, `"max_synergy"`, `"area_synergy"`,
+#'   `"area_synergy_weighted"`.
+#' @param synergy_sign Direction of synergy: `"negative"` or `"positive"`.
+#' @param threshold Threshold for `area_synergy` statistics.
+#' @param residual_scale Residual scaling: `"none"` (default), `"df"`
+#'   (degrees-of-freedom correction based on distinct runs in the
+#'   monotone-additive fit), or `"hc2"` (heteroskedasticity-consistent).
+#' @param df_null Optional manual override for the degrees-of-freedom
+#'   used by `residual_scale = "df"`.
+#' @param df_tol Tolerance used to count distinct runs when computing
+#'   the data-driven `df_null`.
+#'
+#' @return A list with components `t0` (observed statistic), `t_star`
+#'   (vector of bootstrap statistics, length `B`), `p_value` (one-sided
+#'   bootstrap p-value), `fit_add`, `fit_iso`, and the inputs
+#'   `stat`, `synergy_sign`, `threshold`, `residual_scale`, `df_null`.
+#'
+#' @seealso [sir_test()], [additive_ordered_fit()], [isotonic_2d_fit()],
+#'   [interaction_fit()].
+#' @export
 wild_bootstrap <- function(barZ, w, direction, B, seed = 1, osqp_pars = list(),
                            n_cores = 1, use_parallel = TRUE,
                            stat = c("t_int", "t_int_norm", "S2", "S2_norm", "Splus", "Sminus", "max_synergy",
