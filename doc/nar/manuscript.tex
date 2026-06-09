@@ -444,13 +444,13 @@ Looking forward, SIR could be extended to higher-order combinations (three or mo
 Integration with downstream machine learning pipelines, where SIR's calibrated p-values and interaction surfaces replace heuristic synergy scores as training labels, is another promising direction.
 
 \section*{Code availability}
-SIR is provided as an open-source R package available at \url{https://github.com/AsiaeeLab/isosynergy} and installable via \texttt{devtools::install\_github}; a tagged release is archived on Zenodo (DOI to be assigned on acceptance).
+SIR is provided as an open-source R package available at \url{https://github.com/AsiaeeLab/isosynergy} and installable via \texttt{devtools::install\_github}; the v0.1.0 release is archived on Zenodo (\href{https://doi.org/10.5281/zenodo.20604672}{doi:10.5281/zenodo.20604672}; concept DOI \href{https://doi.org/10.5281/zenodo.20604671}{10.5281/zenodo.20604671}).
 The package exposes the full method through a single entry point, \texttt{sir\_test()}, returning the interaction surface, interaction energy, and bootstrap p-value with \texttt{print}, \texttt{summary}, and \texttt{plot} methods, alongside the constituent fitting routines (2D isotonic regression, monotone-additive fitting, and the wild bootstrap) and reference implementations of the Bliss, HSA, Loewe and ZIP baselines; it ships with a vignette and unit tests and passes \texttt{R~CMD~check} cleanly.
 The repository additionally includes all analysis scripts, configuration files, an \texttt{renv} lockfile, and instructions to reproduce every figure and table in this manuscript.
 
 \section*{Data availability}
 The primary inputs are public: DrugCombDB \cite{DrugCombDB2020} at \url{http://drugcombdb.denglab.org/} and NCI-ALMANAC from the National Cancer Institute at \url{https://wiki.nci.nih.gov/display/NCIDTPdata/NCI-ALMANAC}.
-As a resource for the community, we release the complete SIR analysis of DrugCombDB (per-matrix interaction energies, wild-bootstrap p-values at $B=20{,}000$ for escalated candidates, and per-cell-line FDR calls for all 319{,}533 dose--response matrices), deposited on Zenodo (DOI to be assigned on acceptance) under a CC-BY licence.
+As a resource for the community, we release the complete SIR analysis of DrugCombDB (per-matrix interaction energies, wild-bootstrap p-values at $B=20{,}000$ for escalated candidates, and per-cell-line FDR calls for all 319{,}533 dose--response matrices), deposited on Zenodo (\href{https://doi.org/10.5281/zenodo.20604739}{doi:10.5281/zenodo.20604739}) under a CC-BY-4.0 licence.
 This provides stable, calibrated synergy labels as an alternative to the inconsistent heuristic scores currently used to train predictive models.
 
 \section*{Funding}

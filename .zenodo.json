@@ -1,0 +1,47 @@
+{
+  "title": "SIR: Synergy via Isotonic Regression",
+  "description": "A nonparametric R package for drug-combination synergy testing. SIR defines interaction as the deviation from a monotone-additive null fit by 2D isotonic regression, and returns a calibrated per-matrix p-value via a degrees-of-freedom-corrected wild bootstrap, together with the interaction surface and effect size. Reference implementations of the Bliss, HSA, Loewe, and ZIP baselines are included for comparison.",
+  "license": "MIT",
+  "upload_type": "software",
+  "access_right": "open",
+  "keywords": [
+    "drug combinations",
+    "drug synergy",
+    "isotonic regression",
+    "wild bootstrap",
+    "shape-constrained regression",
+    "hypothesis testing",
+    "R package"
+  ],
+  "creators": [
+    {
+      "name": "Asiaee, Amir",
+      "orcid": "0000-0002-5317-9820",
+      "affiliation": "Department of Biostatistics, Vanderbilt University Medical Center"
+    },
+    {
+      "name": "Long, James P.",
+      "affiliation": "Department of Biostatistics, The University of Texas MD Anderson Cancer Center"
+    },
+    {
+      "name": "Pal, Samhita",
+      "affiliation": "Department of Biostatistics, Vanderbilt University Medical Center"
+    },
+    {
+      "name": "Pua, Heather H.",
+      "affiliation": "Department of Pathology, Microbiology and Immunology, Vanderbilt University Medical Center"
+    },
+    {
+      "name": "Coombes, Kevin R.",
+      "affiliation": "Department of Biostatistics, Data Science, and Epidemiology, Georgia Cancer Center, Augusta University"
+    }
+  ],
+  "related_identifiers": [
+    {
+      "identifier": "10.1101/2026.02.05.704019",
+      "relation": "isSupplementTo",
+      "resource_type": "publication-preprint",
+      "scheme": "doi"
+    }
+  ]
+}

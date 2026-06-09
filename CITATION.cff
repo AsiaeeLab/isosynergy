@@ -1,29 +1,30 @@
 cff-version: 1.2.0
-message: "If you use this dataset, please cite both the Zenodo record below and the SIR method paper (see preferred-citation)."
-type: dataset
-title: "SIR (Synergy via Isotonic Regression) calibrated synergy calls for DrugCombDB"
+message: "If you use SIR in your work, please cite the software (this record) and the method paper (see preferred-citation)."
+type: software
+title: "SIR: Synergy via Isotonic Regression"
+abbreviation: "SIR"
 version: "0.1.0"
 date-released: "2026-06-09"
-license: CC-BY-4.0
-doi: 10.5281/zenodo.20604739
-url: "https://doi.org/10.5281/zenodo.20604739"
+license: MIT
+doi: 10.5281/zenodo.20604671
+url: "https://doi.org/10.5281/zenodo.20604671"
 repository-code: "https://github.com/AsiaeeLab/isosynergy"
 keywords:
   - drug combinations
   - drug synergy
   - isotonic regression
   - wild bootstrap
-  - DrugCombDB
-  - false discovery rate
   - shape-constrained regression
+  - hypothesis testing
+  - R package
 abstract: >
-  Per-matrix interaction energies, wild-bootstrap p-values, and per-cell-line
-  Benjamini--Hochberg false-discovery-rate calls produced by SIR (Synergy via
-  Isotonic Regression) for the complete DrugCombDB universe of 319,533 dose-
-  response matrices with complete dose grids. Candidate matrices (per-cell-line
-  nominal p <= 0.05) were escalated by adaptive resampling to B = 20,000
-  bootstrap draws, reusing the initial 200. The release includes the per-matrix
-  table, a JSON schema, SHA-256 checksums, and a README data dictionary.
+  SIR (Synergy via Isotonic Regression) is a nonparametric R package for
+  drug-combination synergy testing. It defines interaction as the deviation from
+  a monotone-additive null fit by 2D isotonic regression and returns a
+  calibrated per-matrix p-value via a degrees-of-freedom-corrected wild
+  bootstrap, together with the interaction surface and effect size. Reference
+  implementations of the Bliss, HSA, Loewe, and ZIP baselines are included for
+  comparison.
 authors:
   - family-names: Asiaee
     given-names: Amir
@@ -43,11 +44,8 @@ authors:
     affiliation: "Department of Biostatistics, Data Science, and Epidemiology, Georgia Cancer Center, Augusta University, Augusta, GA, USA"
 identifiers:
   - type: doi
-    value: 10.5281/zenodo.20604671
-    description: "Concept DOI of the accompanying SIR R package on Zenodo (always resolves to the latest version)."
-  - type: doi
     value: 10.5281/zenodo.20604672
-    description: "Versioned DOI of the SIR R package v0.1.0 on Zenodo."
+    description: "Versioned DOI for SIR v0.1.0 on Zenodo."
   - type: doi
     value: 10.1101/2026.02.05.704019
     description: "bioRxiv preprint of the SIR method paper."

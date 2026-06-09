@@ -14,7 +14,7 @@ To install the methods exposed by this repository as a regular R package
 
 ```r
 # install.packages("devtools")
-devtools::install_github("AsiaeeLab/SIR")
+devtools::install_github("AsiaeeLab/isosynergy")
 ```
 
 Once installed, the main entry point is `sir_test()`:
@@ -37,7 +37,7 @@ that reproduces the figures in the paper, follow the steps below.
 SIR requires R >= 4.1. Clone the repository and restore the package environment:
 
 ```bash
-git clone https://github.com/AsiaeeLab/SIR.git
+git clone https://github.com/AsiaeeLab/isosynergy.git
 cd SIR
 ```
 
