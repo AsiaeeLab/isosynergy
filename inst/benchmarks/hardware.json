@@ -1,0 +1,22 @@
+{
+  "cpu_model": "Intel(R) Xeon(R) w9-3575X",
+  "logical_cores": 88,
+  "ram_gib": 1006.4944686889648,
+  "benchmark_affinity": [
+    0
+  ],
+  "platform": "Linux-6.8.0-134-generic-x86_64-with-glibc2.35",
+  "python": "3.10.12 (main, Jun 22 2026, 18:55:27) [GCC 11.4.0]",
+  "executable": "/usr/bin/python3",
+  "numpy": "1.26.4",
+  "scipy": "1.15.3",
+  "numba": "0.59.1",
+  "sirsyn": "0.1.0",
+  "thread_limits": {
+    "OMP_NUM_THREADS": "1",
+    "OPENBLAS_NUM_THREADS": "1",
+    "MKL_NUM_THREADS": "1",
+    "NUMBA_NUM_THREADS": "1"
+  },
+  "physical_cores": 44
+}

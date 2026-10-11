@@ -37,5 +37,5 @@ weighted dose-response matrix, by solving a sparse quadratic program
 via \code{\link[osqp:osqp]{osqp::osqp()}}.
 }
 \seealso{
-\code{\link[=additive_ordered_fit]{additive_ordered_fit()}}, \code{\link[=sir_test]{sir_test()}}.
+\code{\link[=sir_fit]{sir_fit()}}.
 }

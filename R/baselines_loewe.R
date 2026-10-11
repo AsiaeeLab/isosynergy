@@ -8,7 +8,7 @@
 #'   `doseA`, `doseB`, `response`.
 #' @param response_mode Either `"viability"` or `"inhibition"`.
 #' @param direction Direction of monotonicity (`"decreasing"` for
-#'   viability, `"increasing"` for inhibition).
+#'   normalized viability; `"increasing"` is also available).
 #'
 #' @return A list with components `synergy`, `combo_index`, `observed`,
 #'   `doseA_levels`, `doseB_levels`.

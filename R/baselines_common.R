@@ -1,31 +1,30 @@
-matrix_mean_response <- function(df_long, response_mode = c("viability", "inhibition"), clamp_01 = TRUE) {
-  if (!requireNamespace("data.table", quietly = TRUE)) {
-    stop("Package 'data.table' is required. Install with: install.packages('data.table')")
-  }
+matrix_mean_response <- function(df_long, response_mode = c("viability", "inhibition")) {
   response_mode <- match.arg(response_mode)
-  dt <- data.table::as.data.table(df_long)
-  dt <- standardize_response(dt, mode = response_mode, clamp_01 = clamp_01)
-  y <- if (response_mode == "viability") dt$response_viability else dt$response_inhibition
-  dt[, y := y]
-  dt[, `:=`(doseA = as.numeric(doseA), doseB = as.numeric(doseB))]
-  agg <- dt[, .(y = mean(y)), by = .(doseA, doseB)]
-  doseA_levels <- sort(unique(agg$doseA))
-  doseB_levels <- sort(unique(agg$doseB))
-  agg[, i := match(doseA, doseA_levels)]
-  agg[, j := match(doseB, doseB_levels)]
-  I <- length(doseA_levels)
-  J <- length(doseB_levels)
-  Y <- matrix(NA_real_, nrow = I, ncol = J)
-  Y[cbind(agg$i, agg$j)] <- agg$y
-  list(Y = Y, doseA_levels = doseA_levels, doseB_levels = doseB_levels)
+  required <- c("doseA", "doseB", "response")
+  if (!is.data.frame(df_long) || !all(required %in% names(df_long)) ||
+      !all(vapply(df_long[required], is.numeric, logical(1))) || !nrow(df_long) ||
+      any(!is.finite(as.matrix(df_long[required]))))
+    stop("Supply finite numeric doseA, doseB and response columns.", call. = FALSE)
+  da <- sort(unique(df_long$doseA))
+  db <- sort(unique(df_long$doseB))
+  if (da[1L] != 0 || db[1L] != 0) stop("Both dose axes must begin at zero.", call. = FALSE)
+  values <- if (response_mode == "inhibition") 1 - df_long$response else df_long$response
+  idx <- match(df_long$doseA, da) + (match(df_long$doseB, db) - 1L) * length(da)
+  avg <- tapply(values, idx, mean)
+  Y <- matrix(NA_real_, length(da), length(db))
+  Y[as.integer(names(avg))] <- avg
+  if (anyNA(Y)) stop("Standalone scorers need a complete dose grid.", call. = FALSE)
+  list(Y = Y, doseA_levels = da, doseB_levels = db)
 }
+
+clamp01 <- function(x, eps = 0) pmin(1 - eps, pmax(eps, x))
 
 normalize_to_control <- function(Y) {
   i0 <- 1L
   j0 <- 1L
   y00 <- Y[i0, j0]
   if (!is.finite(y00) || y00 <= 0) {
-    y00 <- 1
+    stop("The zero-dose control must be positive.", call. = FALSE)
   }
   Y / y00
 }

@@ -17,7 +17,7 @@ loewe_synergy(
 \item{response_mode}{Either \code{"viability"} or \code{"inhibition"}.}
 
 \item{direction}{Direction of monotonicity (\code{"decreasing"} for
-viability, \code{"increasing"} for inhibition).}
+normalized viability; \code{"increasing"} is also available).}
 }
 \value{
 A list with components \code{synergy}, \code{combo_index}, \code{observed},

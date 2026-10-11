@@ -17,7 +17,7 @@
 #'   `status` (OSQP solver status), and `objective` (final objective
 #'   value).
 #'
-#' @seealso [additive_ordered_fit()], [sir_test()].
+#' @seealso [sir_fit()].
 #' @export
 isotonic_2d_fit <- function(barZ, w, direction = c("decreasing", "increasing"),
                             osqp_pars = list(), ridge = 1e-9) {

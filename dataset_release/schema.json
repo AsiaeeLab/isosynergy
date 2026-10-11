@@ -1,271 +1,327 @@
 {
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "SIR-derived DrugCombDB synergy calls row schema",
-  "type": "object",
-  "additionalProperties": false,
-  "required": ["matrix_id", "drug_a_name", "drug_b_name", "cell_line", "source_study", "n_doses_a", "n_doses_b", "n_replicates_total", "sir_S2", "sir_p_value", "sir_q_value", "sir_hit_call", "sir_failed", "bliss_score", "bliss_failed", "bliss_unavailable", "hsa_score", "hsa_failed", "hsa_unavailable", "loewe_score", "loewe_failed", "loewe_unavailable", "zip_score", "zip_failed", "zip_unavailable", "sir_version", "drugcombdb_version", "analysis_date", "bootstrap_B"],
-  "properties": {
-    "matrix_id": {
-      "type": "string"
-    },
-    "drug_a_name": {
-      "type": "string"
-    },
-    "drug_b_name": {
-      "type": "string"
-    },
-    "cell_line": {
-      "type": "string"
-    },
-    "source_study": {
-      "type": [
-        "string",
-        "null"
-      ]
-    },
-    "n_doses_a": {
-      "type": "integer"
-    },
-    "n_doses_b": {
-      "type": "integer"
-    },
-    "n_replicates_total": {
-      "type": "integer"
-    },
-    "sir_S2": {
-      "type": "number"
-    },
-    "sir_p_value": {
-      "type": "number",
-      "minimum": 0,
-      "maximum": 1
-    },
-    "sir_q_value": {
-      "type": "number",
-      "minimum": 0,
-      "maximum": 1
-    },
-    "sir_hit_call": {
-      "type": "string",
-      "enum": ["synergy", "antagonism", "no_call"]
-    },
-    "sir_failed": {
-      "type": "boolean"
-    },
-    "bliss_score": {
-      "type": [
-        "number",
-        "null"
-      ]
-    },
-    "bliss_failed": {
-      "type": "boolean"
-    },
-    "bliss_unavailable": {
-      "type": "boolean"
-    },
-    "hsa_score": {
-      "type": [
-        "number",
-        "null"
-      ]
-    },
-    "hsa_failed": {
-      "type": "boolean"
-    },
-    "hsa_unavailable": {
-      "type": "boolean"
-    },
-    "loewe_score": {
-      "type": [
-        "number",
-        "null"
-      ]
-    },
-    "loewe_failed": {
-      "type": "boolean"
-    },
-    "loewe_unavailable": {
-      "type": "boolean"
-    },
-    "zip_score": {
-      "type": [
-        "number",
-        "null"
-      ]
-    },
-    "zip_failed": {
-      "type": "boolean"
-    },
-    "zip_unavailable": {
-      "type": "boolean"
-    },
-    "sir_version": {
-      "type": "string"
-    },
-    "drugcombdb_version": {
-      "type": "string"
-    },
-    "analysis_date": {
-      "type": "string",
-      "format": "date"
-    },
-    "bootstrap_B": {
-      "type": "integer"
-    }
+ "title": "SIR per-unit synergy test results for DrugCombDB (O'Neil and NCI-ALMANAC)",
+ "version": "2.0.0",
+ "files": [
+  "sir_drugcombdb_unit_results.parquet",
+  "sir_drugcombdb_unit_results.csv"
+ ],
+ "rows": 250375,
+ "rows_by_study": {
+  "ALMANAC": 227323,
+  "ONEIL": 23052
+ },
+ "software": "SIR R package 0.2.0 (bundled Python implementation sirsyn)",
+ "reference_model": "Bliss independence on viability, E Y_ij = E Y_i0 E Y_0j, control normalized to 1",
+ "null_tested": {
+  "ONEIL": "no synergy in any combination cell relative to the reported single-agent curves, which are held fixed",
+  "ALMANAC": "no synergy in any combination cell (Bliss independence on viability, single agents measured on the same plate)"
+ },
+ "labels": "no binary synergy labels; use p- and q-values within the declared testing family",
+ "columns": [
+  {
+   "name": "study",
+   "dtype": "object",
+   "description": "ONEIL or ALMANAC (DrugCombDB source study)"
   },
-  "x-parquet-column-order": ["matrix_id", "drug_a_name", "drug_b_name", "cell_line", "source_study", "n_doses_a", "n_doses_b", "n_replicates_total", "sir_S2", "sir_p_value", "sir_q_value", "sir_hit_call", "sir_failed", "bliss_score", "bliss_failed", "bliss_unavailable", "hsa_score", "hsa_failed", "hsa_unavailable", "loewe_score", "loewe_failed", "loewe_unavailable", "zip_score", "zip_failed", "zip_unavailable", "sir_version", "drugcombdb_version", "analysis_date", "bootstrap_B"],
-  "x-parquet-columns": [
-    {
-      "name": "matrix_id",
-      "type": "string",
-      "nullable": false
-    },
-    {
-      "name": "drug_a_name",
-      "type": "string",
-      "nullable": false
-    },
-    {
-      "name": "drug_b_name",
-      "type": "string",
-      "nullable": false
-    },
-    {
-      "name": "cell_line",
-      "type": "string",
-      "nullable": false
-    },
-    {
-      "name": "source_study",
-      "type": "string",
-      "nullable": true
-    },
-    {
-      "name": "n_doses_a",
-      "type": "integer",
-      "nullable": false
-    },
-    {
-      "name": "n_doses_b",
-      "type": "integer",
-      "nullable": false
-    },
-    {
-      "name": "n_replicates_total",
-      "type": "integer",
-      "nullable": false
-    },
-    {
-      "name": "sir_S2",
-      "type": "number",
-      "nullable": false
-    },
-    {
-      "name": "sir_p_value",
-      "type": "number",
-      "nullable": false,
-      "minimum": 0,
-      "maximum": 1
-    },
-    {
-      "name": "sir_q_value",
-      "type": "number",
-      "nullable": false,
-      "minimum": 0,
-      "maximum": 1
-    },
-    {
-      "name": "sir_hit_call",
-      "type": "string",
-      "nullable": false,
-      "enum": ["synergy", "antagonism", "no_call"]
-    },
-    {
-      "name": "sir_failed",
-      "type": "boolean",
-      "nullable": false
-    },
-    {
-      "name": "bliss_score",
-      "type": "number",
-      "nullable": true
-    },
-    {
-      "name": "bliss_failed",
-      "type": "boolean",
-      "nullable": false
-    },
-    {
-      "name": "bliss_unavailable",
-      "type": "boolean",
-      "nullable": false
-    },
-    {
-      "name": "hsa_score",
-      "type": "number",
-      "nullable": true
-    },
-    {
-      "name": "hsa_failed",
-      "type": "boolean",
-      "nullable": false
-    },
-    {
-      "name": "hsa_unavailable",
-      "type": "boolean",
-      "nullable": false
-    },
-    {
-      "name": "loewe_score",
-      "type": "number",
-      "nullable": true
-    },
-    {
-      "name": "loewe_failed",
-      "type": "boolean",
-      "nullable": false
-    },
-    {
-      "name": "loewe_unavailable",
-      "type": "boolean",
-      "nullable": false
-    },
-    {
-      "name": "zip_score",
-      "type": "number",
-      "nullable": true
-    },
-    {
-      "name": "zip_failed",
-      "type": "boolean",
-      "nullable": false
-    },
-    {
-      "name": "zip_unavailable",
-      "type": "boolean",
-      "nullable": false
-    },
-    {
-      "name": "sir_version",
-      "type": "string",
-      "nullable": false
-    },
-    {
-      "name": "drugcombdb_version",
-      "type": "string",
-      "nullable": false
-    },
-    {
-      "name": "analysis_date",
-      "type": "string",
-      "nullable": false,
-      "format": "date"
-    },
-    {
-      "name": "bootstrap_B",
-      "type": "integer",
-      "nullable": false
-    }
-  ]
+  {
+   "name": "unit_id",
+   "dtype": "object",
+   "description": "analysis unit. O'Neil: drugA|drugB|cell_line|batch{0,1} (four replicate blocks); ALMANAC: DrugCombDB experiment id (one plate)"
+  },
+  {
+   "name": "drug_row",
+   "dtype": "object",
+   "description": "drug on the rows (dose index i), DrugCombDB name"
+  },
+  {
+   "name": "drug_col",
+   "dtype": "object",
+   "description": "drug on the columns (dose index j), DrugCombDB name"
+  },
+  {
+   "name": "cell_line",
+   "dtype": "object",
+   "description": "cell line (DrugCombDB)"
+  },
+  {
+   "name": "batch",
+   "dtype": "Int64",
+   "description": "O'Neil batch (0, or 0 and 1 for the 315 drug pair and cell line groups measured twice); empty for ALMANAC"
+  },
+  {
+   "name": "family",
+   "dtype": "object",
+   "description": "Benjamini-Hochberg testing family: study, cell line and (O'Neil) batch"
+  },
+  {
+   "name": "design",
+   "dtype": "object",
+   "description": "analysis design. P: replicate blocks with the reported single-agent curves held fixed; S: single plate with single agents measured on the plate"
+  },
+  {
+   "name": "null_tested",
+   "dtype": "object",
+   "description": "null hypothesis of the SIR statistic for this unit"
+  },
+  {
+   "name": "experiment_ids",
+   "dtype": "object",
+   "description": "contributing DrugCombDB block ids"
+  },
+  {
+   "name": "n_replicates",
+   "dtype": "int64",
+   "description": "replicate plates analyzed (4 O'Neil blocks; 1 ALMANAC plate)"
+  },
+  {
+   "name": "doses_row_uM",
+   "dtype": "object",
+   "description": "row-drug doses analyzed, including zero, uM, ';'-separated"
+  },
+  {
+   "name": "doses_col_uM",
+   "dtype": "object",
+   "description": "column-drug doses analyzed, including zero, uM, ';'-separated"
+  },
+  {
+   "name": "control_raw",
+   "dtype": "float64",
+   "description": "raw control well (Response / 100); every plate is divided by its control"
+  },
+  {
+   "name": "edge_row_top",
+   "dtype": "float64",
+   "description": "row-drug single-agent viability at its top dose (O'Neil: reported curve)"
+  },
+  {
+   "name": "edge_col_top",
+   "dtype": "float64",
+   "description": "column-drug single-agent viability at its top dose (O'Neil: reported curve)"
+  },
+  {
+   "name": "activity",
+   "dtype": "float64",
+   "description": "activity: mean of 1 - viability over the combination wells (O'Neil: of the replicate means at each well, after the replicate screen)"
+  },
+  {
+   "name": "activity_all_wells",
+   "dtype": "float64",
+   "description": "mean of 1 - viability over all non-control wells"
+  },
+  {
+   "name": "mean_bliss_prediction",
+   "dtype": "float64",
+   "description": "mean over combination cells of the Bliss prediction a_hat_i b_hat_j (isotonic single-agent fits)"
+  },
+  {
+   "name": "mean_excess",
+   "dtype": "float64",
+   "description": "mean viability Bliss excess on raw wells, Y_i0 Y_0j - Y_ij averaged over combination cells (positive: more killing than Bliss). ALMANAC: the cell average of the plate. O'Neil: the block-level estimate, the average over the four plates of each plate's cell average (the estimate of the companion block-level t test); it equals the cell average of the replicate means when no replicate value was screened (n_screened = 0)"
+  },
+  {
+   "name": "mean_excess_se",
+   "dtype": "float64",
+   "description": "standard error of mean_excess from the companion test (O'Neil: block-level, conditional on the reported single-agent curves)"
+  },
+  {
+   "name": "companion_test",
+   "dtype": "object",
+   "description": "companion mean test (O'Neil: block-level t, 3 df; ALMANAC: V2Sp)"
+  },
+  {
+   "name": "companion_t",
+   "dtype": "float64",
+   "description": "companion t statistic"
+  },
+  {
+   "name": "companion_df",
+   "dtype": "float64",
+   "description": "companion degrees of freedom"
+  },
+  {
+   "name": "p_companion",
+   "dtype": "float64",
+   "description": "one-sided p-value of the companion test (null: no synergy on average)"
+  },
+  {
+   "name": "q_companion",
+   "dtype": "float64",
+   "description": "BH q-value of p_companion within family"
+  },
+  {
+   "name": "p_companion_relnull",
+   "dtype": "float64",
+   "description": "companion p-value against the within-family empirical null (relative null: stronger than typical for the family)"
+  },
+  {
+   "name": "q_companion_relnull",
+   "dtype": "float64",
+   "description": "BH q-value of p_companion_relnull within family"
+  },
+  {
+   "name": "fixed_edge_t",
+   "dtype": "float64",
+   "description": "O'Neil only: fixed-edge viability t with the cross-fitted block-shift variance divided by 4 (15 df)"
+  },
+  {
+   "name": "p_fixed_edge",
+   "dtype": "float64",
+   "description": "O'Neil only: one-sided p-value of fixed_edge_t"
+  },
+  {
+   "name": "fixed_edge_block_var",
+   "dtype": "float64",
+   "description": "O'Neil only: block-shift variance component used by fixed_edge_t"
+  },
+  {
+   "name": "p_mean_boot",
+   "dtype": "float64",
+   "description": "p-value of the raw mean excess calibrated on the reference plates of the SIR statistic"
+  },
+  {
+   "name": "t_std",
+   "dtype": "float64",
+   "description": "the SIR statistic T_SIR = sum over combination cells of ((a_hat_i b_hat_j - mu_hat_ij) / s(a_hat_i b_hat_j))_+^2, mu_hat the 2D isotonic fit"
+  },
+  {
+   "name": "p_tstd",
+   "dtype": "float64",
+   "description": "p-value of the SIR statistic (plug-in parametric bootstrap at exact Bliss; B = 9,999 when a stage-1 p-value was <= 0.05, otherwise B = 399)"
+  },
+  {
+   "name": "p_tstd_stage1",
+   "dtype": "float64",
+   "description": "stage-1 p-value of the SIR statistic (B = 399)"
+  },
+  {
+   "name": "mc_stage",
+   "dtype": "int64",
+   "description": "Monte Carlo stage reported (1 or 2)"
+  },
+  {
+   "name": "mc_B",
+   "dtype": "int64",
+   "description": "reference plates behind p_tstd and p_scan"
+  },
+  {
+   "name": "q_tstd",
+   "dtype": "float64",
+   "description": "BH q-value of p_tstd within family"
+  },
+  {
+   "name": "p_tstd_floored",
+   "dtype": "float64",
+   "description": "ALMANAC only: p_tstd floored at 1 / (2 x bank pool + 1), the resolution of the plate-difference noise bank"
+  },
+  {
+   "name": "q_tstd_floored",
+   "dtype": "float64",
+   "description": "ALMANAC only: BH q-value of p_tstd_floored within family"
+  },
+  {
+   "name": "bank_pool_sets",
+   "dtype": "float64",
+   "description": "eligible noise-bank sets (potency stratum, other half of the cell lines)"
+  },
+  {
+   "name": "p_scan",
+   "dtype": "float64",
+   "description": "region scan global p-value (single-step max-T over high-dose rectangles and 2x2 blocks)"
+  },
+  {
+   "name": "p_scan_stage1",
+   "dtype": "float64",
+   "description": "stage-1 region scan p-value"
+  },
+  {
+   "name": "top_region",
+   "dtype": "object",
+   "description": "region with the smallest adjusted p-value ('i,j' cells, original dose indices)"
+  },
+  {
+   "name": "top_region_type",
+   "dtype": "object",
+   "description": "rectangle (high-dose) and/or 2x2 block"
+  },
+  {
+   "name": "top_region_z",
+   "dtype": "float64",
+   "description": "standardized raw-well region sum of top_region"
+  },
+  {
+   "name": "top_region_p_adj",
+   "dtype": "float64",
+   "description": "familywise-adjusted p-value of top_region (within the matrix)"
+  },
+  {
+   "name": "fragility_cell",
+   "dtype": "object",
+   "description": "ALMANAC plates with p_tstd <= 0.05: most influential combination cell"
+  },
+  {
+   "name": "fragility_cell_p",
+   "dtype": "float64",
+   "description": "p_tstd with that cell set to missing"
+  },
+  {
+   "name": "fragility_cell_share",
+   "dtype": "float64",
+   "description": "share of the SIR statistic contributed by that cell"
+  },
+  {
+   "name": "fragility_sa_dose",
+   "dtype": "object",
+   "description": "most influential single-agent dose (drug, index)"
+  },
+  {
+   "name": "fragility_sa_p",
+   "dtype": "float64",
+   "description": "p_tstd with that dose row or column dropped"
+  },
+  {
+   "name": "fragility_sa_share",
+   "dtype": "float64",
+   "description": "share of the SIR statistic removed by dropping it"
+  },
+  {
+   "name": "n_dropped_doses",
+   "dtype": "int64",
+   "description": "single-agent doses dropped because the single-agent well was missing (the dose row or column is removed)"
+  },
+  {
+   "name": "n_missing_cells",
+   "dtype": "int64",
+   "description": "missing combination wells"
+  },
+  {
+   "name": "n_screened",
+   "dtype": "int64",
+   "description": "O'Neil: replicate values removed by the replicate screen (more than 5 model SDs from the median of the other replicates)"
+  },
+  {
+   "name": "screened",
+   "dtype": "object",
+   "description": "screened values: (i,j), replicate and distance in model SDs"
+  },
+  {
+   "name": "reference_flags_per_plate",
+   "dtype": "float64",
+   "description": "mean screened values per reference plate (the same screen is applied to the reference)"
+  },
+  {
+   "name": "companion_degenerate",
+   "dtype": "bool",
+   "description": "companion SE zero or not finite (p-value is NaN)"
+  },
+  {
+   "name": "log_notes",
+   "dtype": "object",
+   "description": "data-handling and reference notes (noise-bank stratum, pool size, cross-fitting group)"
+  },
+  {
+   "name": "seed_entropy",
+   "dtype": "object",
+   "description": "seed entropy of the fit (reruns reproduce the unit exactly)"
+  }
+ ]
 }

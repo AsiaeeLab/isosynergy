@@ -14,8 +14,8 @@ fit_4pl_inhibition <- function(dose, inhib, eps = 1e-6) {
   dose2 <- pmax(dose, d0 * 1e-3)
 
   nll <- function(par) {
-    E0 <- plogis(par[1])
-    Emax <- plogis(par[2])
+    E0 <- stats::plogis(par[1])
+    Emax <- stats::plogis(par[2])
     ec50 <- exp(par[3])
     h <- exp(par[4])
     pred <- E0 + (Emax - E0) / (1 + (ec50 / dose2)^h)
@@ -23,8 +23,8 @@ fit_4pl_inhibition <- function(dose, inhib, eps = 1e-6) {
   }
 
   p0 <- c(
-    qlogis(clamp01(min(inhib), eps = 1e-4)),
-    qlogis(clamp01(max(inhib), eps = 1e-4)),
+    stats::qlogis(clamp01(min(inhib), eps = 1e-4)),
+    stats::qlogis(clamp01(max(inhib), eps = 1e-4)),
     log(stats::median(dpos)),
     log(1)
   )
@@ -44,8 +44,8 @@ fit_4pl_inhibition <- function(dose, inhib, eps = 1e-6) {
   }
 
   par <- opt$par
-  E0 <- plogis(par[1])
-  Emax <- plogis(par[2])
+  E0 <- stats::plogis(par[1])
+  Emax <- stats::plogis(par[2])
   ec50 <- exp(par[3])
   h <- exp(par[4])
   function(x) {

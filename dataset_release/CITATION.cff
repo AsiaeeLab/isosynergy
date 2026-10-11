@@ -1,29 +1,26 @@
 cff-version: 1.2.0
-message: "If you use this dataset, please cite both the Zenodo record below and the SIR method paper (see preferred-citation)."
+message: "If you use this dataset, please cite this record and the SIR method paper (see preferred-citation)."
 type: dataset
-title: "SIR (Synergy via Isotonic Regression) calibrated synergy calls for DrugCombDB"
-version: "0.1.0"
-date-released: "2026-06-09"
+title: "SIR per-unit synergy test results for DrugCombDB (O'Neil and NCI-ALMANAC)"
+version: "2.0.0"
+date-released: "2026-10-11"
 license: CC-BY-4.0
-doi: 10.5281/zenodo.20604739
-url: "https://doi.org/10.5281/zenodo.20604739"
 repository-code: "https://github.com/AsiaeeLab/isosynergy"
 keywords:
   - drug combinations
   - drug synergy
+  - Bliss independence
   - isotonic regression
-  - wild bootstrap
   - DrugCombDB
-  - false discovery rate
-  - shape-constrained regression
+  - NCI-ALMANAC
+  - hypothesis testing
 abstract: >
-  Per-matrix interaction energies, wild-bootstrap p-values, and per-cell-line
-  Benjamini--Hochberg false-discovery-rate calls produced by SIR (Synergy via
-  Isotonic Regression) for the complete DrugCombDB universe of 319,533 dose-
-  response matrices with complete dose grids. Candidate matrices (per-cell-line
-  nominal p <= 0.05) were escalated by adaptive resampling to B = 20,000
-  bootstrap draws, reusing the initial 200. The release includes the per-matrix
-  table, a JSON schema, SHA-256 checksums, and a README data dictionary.
+  Per-unit results of the SIR test against Bliss independence for 23,052 O'Neil
+  units and 227,323 NCI-ALMANAC plates in DrugCombDB: activity, mean Bliss excess
+  with standard error and companion p-value, the SIR statistic with its p-value,
+  q-values within declared testing families, region-scan results, fragility
+  diagnostics, the data-handling log and the seed of every fit. No binary
+  synergy labels are included.
 authors:
   - family-names: Asiaee
     given-names: Amir
@@ -43,18 +40,12 @@ authors:
     affiliation: "Department of Biostatistics, Data Science, and Epidemiology, Georgia Cancer Center, Augusta University, Augusta, GA, USA"
 identifiers:
   - type: doi
-    value: 10.5281/zenodo.20604671
-    description: "Concept DOI of the accompanying SIR R package on Zenodo (always resolves to the latest version)."
-  - type: doi
-    value: 10.5281/zenodo.20604672
-    description: "Versioned DOI of the SIR R package v0.1.0 on Zenodo."
-  - type: doi
-    value: 10.1101/2026.02.05.704019
+    value: 10.64898/2026.02.05.704019
     description: "bioRxiv preprint of the SIR method paper."
 preferred-citation:
   type: article
-  title: "A shape-constrained regression and wild bootstrap framework for reproducible drug synergy testing"
-  doi: 10.1101/2026.02.05.704019
+  title: "SIR: shape-constrained, calibrated testing of Bliss synergy in drug combination dose-response matrices"
+  doi: 10.64898/2026.02.05.704019
   year: 2026
   authors:
     - family-names: Asiaee

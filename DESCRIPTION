@@ -1,48 +1,39 @@
 Package: SIR
-Title: Shape-Constrained Drug Synergy Testing via Isotonic Regression
-Version: 0.1.0
+Title: Isotonic Bliss Synergy Testing for Drug Combinations
+Version: 0.2.0
 Authors@R: c(
     person("Amir", "Asiaee", , "amir.asiaeetaheri@vumc.org", role = c("aut", "cre")),
     person("James P.", "Long", role = "aut"),
     person("Samhita", "Pal", role = "aut"),
     person("Heather H.", "Pua", role = "aut"),
     person("Kevin R.", "Coombes", role = "aut"))
-Description: A nonparametric framework for drug combination synergy
-    testing. Interaction is defined as the deviation from a
-    monotone-additive null fit by two-dimensional isotonic regression on
-    a shared monotone surface. A degrees-of-freedom-corrected wild
-    bootstrap yields calibrated p-values and effect summaries for each
-    dose-response matrix, supporting principled hit calling and error
-    rate control in large drug combination screens.
+Description: Tests drug-combination viability matrices relative to Bliss
+    independence using isotonic single-agent and surface fits. A standardized
+    excess statistic is calibrated by a plug-in parametric bootstrap at exact
+    Bliss with two-stage Monte Carlo. Includes design-matched companion mean
+    tests, region scans, activity summaries, missing-well and replicate handling,
+    and within-family false discovery rate adjustment. Calls the bundled
+    Python implementation through 'reticulate'.
 License: MIT + file LICENSE
-URL: https://github.com/AsiaeeLab/SIR
-BugReports: https://github.com/AsiaeeLab/SIR/issues
+URL: https://github.com/AsiaeeLab/isosynergy
+BugReports: https://github.com/AsiaeeLab/isosynergy/issues
 Depends:
     R (>= 4.1)
 Imports:
-    data.table,
+    graphics,
+    grDevices,
     Matrix,
     osqp,
+    reticulate,
     stats,
     utils
 Suggests:
-    arrow,
-    digest,
-    dplyr,
-    future,
-    future.apply,
-    ggplot2,
     knitr,
-    patchwork,
     rmarkdown,
-    rprojroot,
-    scales,
-    synergyfinder,
-    testthat (>= 3.0.0),
-    tools,
-    yaml
+    testthat (>= 3.0.0)
+SystemRequirements: Python (>= 3.9) with numpy, scipy, numba
 VignetteBuilder: knitr
 Config/testthat/edition: 3
 Encoding: UTF-8
 Roxygen: list(markdown = TRUE)
-RoxygenNote: 7.3.3
+Config/roxygen2/version: 8.0.0

@@ -1,113 +1,104 @@
 ---
-title: "Getting started with SIR"
+title: "Isotonic Bliss synergy testing with SIR"
 output: rmarkdown::html_vignette
 vignette: >
-  %\VignetteIndexEntry{Getting started with SIR}
+  %\VignetteIndexEntry{Isotonic Bliss synergy testing with SIR}
   %\VignetteEngine{knitr::rmarkdown}
   %\VignetteEncoding{UTF-8}
 ---
 
-```{r setup, include = FALSE}
-knitr::opts_chunk$set(
-  collapse = TRUE,
-  comment = "#>",
-  fig.width = 5,
-  fig.height = 4
-)
-```
-
-```{r}
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(collapse = TRUE, comment = "#>", fig.width = 9, fig.height = 3.5)
 library(SIR)
+python_ready <- all(vapply(c("numpy", "scipy", "numba"),
+                          reticulate::py_module_available, logical(1)))
+knitr::opts_chunk$set(eval = python_ready)
 ```
 
-## A small synthetic example
+SIR compares a viability surface with Bliss independence, fitting nonincreasing
+single-agent curves and a two-dimensional isotonic surface. The primary statistic
+measures standardized positive excess. Its reference is a plug-in bootstrap at
+exact Bliss. The companion test evaluates mean excess, while a region scan
+localizes candidate synergy. Activity is mean `1 - Y` over observed combinations.
 
-We generate a small (6 by 6) dose-response matrix on a transformed scale,
-with a known synergistic bump in the middle of the grid. Rows index doses
-of drug A and columns doses of drug B.
+Install Python >= 3.9 with numpy, scipy and numba, and select its executable with
+`RETICULATE_PYTHON` before starting R. `sir_python_install_help()` prints commands;
+`sir_python_config()` reports the selected interpreter. Python is bundled only as
+source for `sirsyn`; the interpreter and dependencies are installed separately.
+The example chunks evaluate when those dependencies are available.
 
-```{r}
-set.seed(2026)
-I <- 6L; J <- 6L
+## Simulated single plate
 
-# Monotone-decreasing single-agent effects, centered.
-u <- -cumsum(abs(rnorm(I, mean = 0.30, sd = 0.10))); u <- u - mean(u)
-v <- -cumsum(abs(rnorm(J, mean = 0.30, sd = 0.10))); v <- v - mean(v)
+Rows and columns must be ordered by increasing dose, with zero first. Viability
+is normalized to a control of one. This simulation adds Gaussian measurement
+noise and a synergy effect at the higher doses.
 
-# Additive null surface.
-Z_add <- outer(u, v, "+")
-
-# Negative bump at the centre of the grid -> synergy under "decreasing" data.
-ii <- seq_len(I); jj <- seq_len(J)
-bump <- outer(ii, jj, function(i, j) {
-  exp(-((i - (I + 1) / 2)^2 + (j - (J + 1) / 2)^2) / (2 * 1.2^2))
-})
-Z <- Z_add - 0.30 * bump + 0.05 * matrix(rnorm(I * J), I, J)
-```
-
-## Running the SIR test
-
-The convenient entry point is `sir_test()`. It fits both the
-monotone-additive null surface and a fully monotone two-dimensional
-isotonic surface, then computes a wild-bootstrap p-value against the
-additive null. We use a small bootstrap (`B = 100`) here so the vignette
-runs quickly; in practice values around 200 to 500 are typical.
-
-```{r}
-fit <- sir_test(
-  Z,
-  B = 100,
-  direction = "decreasing",
-  synergy_sign = "negative",
-  stat = "S2",
-  seed = 1
-)
-
-fit
-```
-
-A more detailed view is provided by `summary()`:
-
-```{r}
+```{r simulate}
+set.seed(21)
+doses <- c(0, 0.1, 0.3, 1, 3)
+a <- c(1, 0.95, 0.8, 0.55, 0.3)
+b <- c(1, 0.9, 0.7, 0.45, 0.25)
+Y <- outer(a, b) + matrix(rnorm(25, sd = 0.04), 5)
+Y[1, 1] <- 1
+Y[3:5, 3:5] <- Y[3:5, 3:5] - 0.12
+noise <- sir_noise_parametric(sd = 0.04)
+fit <- sir_fit(Y, doses = list(doses, doses), design = "S", noise = noise, seed = 12)
 summary(fit)
 ```
 
-## Inspecting the interaction surface
+The default first stage uses 399 reference draws. If either the primary or scan
+p-value is at most 0.05, a fresh second stage uses 9,999 draws. `t_std` is the
+SIR statistic; `p_tstd` and `p_scan` report the final stage; their stage-one values remain available.
 
-The fitted interaction surface `delta = theta_iso - theta_add` is
-returned in `fit$delta`. Negative values indicate synergy under
-viability-style data:
-
-```{r}
-round(fit$delta, 3)
-```
-
-A heatmap of the interaction surface is the default plot:
-
-```{r}
+```{r surface}
 plot(fit)
 ```
 
-## Comparing against classical baselines
+The excess map is descriptive. Region claims use adjusted scan p-values and are
+available in `fit$claims`. All indices in claims, logs and fragility fields are
+zero-based positions in the original grid: add one to index the R input.
 
-SIR also exposes the four most common synergy baselines, useful for
-sanity-checking and methods comparisons. They consume long-format
-dose-response tables:
+## Replicates, external curves, and missing wells
 
-```{r}
-df <- data.frame(
-  doseA = rep(seq_len(I), times = J),
-  doseB = rep(seq_len(J), each = I),
-  response = pmax(0, pmin(1, plogis(as.numeric(Z)))),
-  replicate = "1"
-)
+For replicated data supply an array with dimensions
+`c(replicates, rows, columns)`. Design R measures single agents on every plate
+and uses a block-level companion t test. S with replicates is relabeled R.
+At least three available replicate values are required for screening.
 
-bliss <- bliss_score(df, response_mode = "viability")
-hsa   <- hsa_score(df, response_mode = "viability")
+Design P treats the first row and column as external single-agent curves.
+The default `sa_replicates = Inf` keeps them fixed and conditions inference on
+the reported curves. Finite `sa_replicates` and `sa_rho` propagate specified
+curve error. Plate shifts belong in the noise model and the design-P companion
+variance. Assay-specific SD curves or residual banks can be estimated with
+`sir_sd_from_replicates()` and `sir_noise_bank()`.
 
-dim(bliss$synergy)
-dim(hsa$synergy)
+```{r missing}
+Ym <- Y
+Ym[2, 3] <- NA_real_
+missing_fit <- sir_fit(Ym, noise = noise, seed = 12)
+missing_fit$log$missing_cells
+missing_fit$mean_test
 ```
 
-For full details on each helper, see `?additive_ordered_fit`,
-`?isotonic_2d_fit`, `?wild_bootstrap`, and `?interaction_summaries`.
+Missing combinations are excluded without imputation. A missing single-agent
+well removes its dose row or column. On incomplete single-plate S grids, the
+companion uses bootstrap mean excess at exact Bliss and reports an unavailable SE;
+treat that p-value as exploratory. The data log records these decisions. Fits can be saved with `saveRDS()`.
+
+## A declared screening family
+
+```{r screen}
+panel <- data.frame(pair = c("A+B", "C+D", "E+F"),
+                    family = c("cell-1", "cell-1", "cell-2"))
+panel$Y <- list(Y, outer(a, b), outer(a, b))
+hits <- sir_screen(panel, design = "S", noise = noise, seed = 15)
+hits[c("pair", "family", "p", "q", "call")]
+```
+
+BH adjustment is performed within each family. Inspect `attr(hits, "notes")`
+for Monte Carlo resolution limits. Calls need independent experimental
+confirmation. Region-scan calibration was evaluated by simulation on complete grids with
+parametric noise in designs S and P; it has not been evaluated with residual
+banks, missing wells, replicate screening or propagated single-agent
+uncertainty. Plate shifts were evaluated in design P, not in design S. Fragility flags describe
+sensitivity to influential cells and single-agent doses; they are not outlier tests.

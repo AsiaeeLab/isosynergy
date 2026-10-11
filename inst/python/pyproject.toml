@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "sirsyn"
+version = "0.1.0"
+description = "Synergy testing for drug-combination matrices: isotonic Bliss T_std with a plug-in bootstrap reference, companion mean test, region scan, data-handling rules"
+requires-python = ">=3.9"
+dependencies = ["numpy>=1.22", "scipy>=1.8", "numba>=0.56"]
+
+[project.optional-dependencies]
+test = ["pytest>=7", "cvxpy>=1.3"]
+
+[tool.setuptools]
+packages = ["sirsyn"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = [".", "tests"]
+markers = ["slow: Monte Carlo reproductions of fixed reference rates (minutes; up to 12 worker processes)"]
+addopts = "-m 'not slow'"

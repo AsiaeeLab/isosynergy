@@ -4,39 +4,14 @@
 \name{SIR-package}
 \alias{SIR}
 \alias{SIR-package}
-\title{SIR: Shape-Constrained Drug Synergy Testing via Isotonic Regression}
+\title{SIR: Isotonic Bliss Synergy Testing}
 \description{
-SIR (Synergy via Isotonic Regression) is a nonparametric framework for
-drug combination synergy testing. The package fits two competing
-shape-constrained surfaces to a dose-response matrix---a fully monotone
-two-dimensional isotonic surface and a monotone-additive null---and
-summarises their difference as an interaction surface. A
-degrees-of-freedom-corrected wild bootstrap calibrates a p-value
-against the additive null without parametric distributional assumptions.
+Tests viability matrices using a standardized isotonic Bliss excess,
+a plug-in exact-Bliss bootstrap, companion mean tests, and region scans.
+Use \code{\link[=sir_fit]{sir_fit()}} for one matrix and \code{\link[=sir_screen]{sir_screen()}} for a declared family.
+Python is loaded lazily; see \code{\link[=sir_python_config]{sir_python_config()}} and
+\code{\link[=sir_python_install_help]{sir_python_install_help()}} for setup.
 }
-\section{Main entry points}{
-
-\itemize{
-\item \code{\link[=sir_test]{sir_test()}} runs the full pipeline (fits both surfaces, computes
-the interaction energy, and returns a wild-bootstrap p-value).
-\item \code{\link[=additive_ordered_fit]{additive_ordered_fit()}} and \code{\link[=isotonic_2d_fit]{isotonic_2d_fit()}} expose the two
-underlying fits.
-\item \code{\link[=wild_bootstrap]{wild_bootstrap()}} performs the bootstrap p-value computation.
-\item \code{\link[=interaction_summaries]{interaction_summaries()}} and \code{\link[=interaction_fit]{interaction_fit()}} compute summary
-statistics from a fitted interaction surface.
-\item \code{\link[=bliss_score]{bliss_score()}}, \code{\link[=hsa_score]{hsa_score()}}, \code{\link[=loewe_score]{loewe_score()}}, \code{\link[=zip_score]{zip_score()}}
-provide classical baselines for comparison.
-}
-}
-
-\section{Reference}{
-
-Asiaee A, Long JP, Pal S, Pua HH, Coombes KR (2026).
-\emph{A shape-constrained regression and wild bootstrap framework for
-reproducible drug synergy testing}. bioRxiv.
-\doi{10.1101/2026.02.05.704019}
-}
-
 \seealso{
 Useful links:
 \itemize{
@@ -50,6 +25,7 @@ Useful links:
 
 Authors:
 \itemize{
+  \item Amir Asiaee \email{amir.asiaeetaheri@vumc.org}
   \item James P. Long
   \item Samhita Pal
   \item Heather H. Pua

@@ -31,8 +31,3 @@ solve_osqp <- function(P, q, A, l, u, pars = list()) {
   msg <- paste0("OSQP failed: status=", res$info$status, " (", res$info$status_val, ")")
   stop(msg)
 }
-
-sse_weighted <- function(y, theta, w) {
-  ok <- is.finite(y) & is.finite(theta) & is.finite(w) & (w > 0)
-  sum(w[ok] * (y[ok] - theta[ok])^2)
-}

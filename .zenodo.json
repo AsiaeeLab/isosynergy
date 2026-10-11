@@ -1,16 +1,17 @@
 {
-  "title": "SIR: Synergy via Isotonic Regression",
-  "description": "A nonparametric R package for drug-combination synergy testing. SIR defines interaction as the deviation from a monotone-additive null fit by 2D isotonic regression, and returns a calibrated per-matrix p-value via a degrees-of-freedom-corrected wild bootstrap, together with the interaction surface and effect size. Reference implementations of the Bliss, HSA, Loewe, and ZIP baselines are included for comparison.",
+  "title": "SIR: Isotonic Bliss Synergy Testing for Drug Combinations",
+  "description": "R package for testing drug-combination viability matrices against Bliss independence. SIR fits nonincreasing isotonic curves to the single agents and a two-dimensional isotonic surface to the matrix, and tests the standardized positive Bliss excess (the SIR statistic) with a plug-in parametric bootstrap at exact Bliss and two-stage Monte Carlo. It also reports activity, a companion test of the mean Bliss excess with a design-matched standard error, a region scan with familywise error control, and missing-well, replicate-screening and fragility diagnostics, and runs screens with false discovery rate control within declared families. The R interface wraps the bundled Python implementation. The reproduce/ directory regenerates every number, table and figure of the accompanying article.",
   "license": "MIT",
   "upload_type": "software",
   "access_right": "open",
   "keywords": [
     "drug combinations",
     "drug synergy",
+    "Bliss independence",
     "isotonic regression",
-    "wild bootstrap",
     "shape-constrained regression",
     "hypothesis testing",
+    "parametric bootstrap",
     "R package"
   ],
   "creators": [
@@ -38,10 +39,11 @@
   ],
   "related_identifiers": [
     {
-      "identifier": "10.1101/2026.02.05.704019",
+      "identifier": "10.64898/2026.02.05.704019",
       "relation": "isSupplementTo",
       "resource_type": "publication-preprint",
       "scheme": "doi"
     }
-  ]
+  ],
+  "version": "0.2.0"
 }

@@ -1,10 +1,10 @@
 cff-version: 1.2.0
 message: "If you use SIR in your work, please cite the software (this record) and the method paper (see preferred-citation)."
 type: software
-title: "SIR: Synergy via Isotonic Regression"
+title: "SIR: Isotonic Bliss Synergy Testing for Drug Combinations"
 abbreviation: "SIR"
-version: "0.1.0"
-date-released: "2026-06-09"
+version: "0.2.0"
+date-released: "2026-10-11"
 license: MIT
 doi: 10.5281/zenodo.20604671
 url: "https://doi.org/10.5281/zenodo.20604671"
@@ -13,18 +13,17 @@ keywords:
   - drug combinations
   - drug synergy
   - isotonic regression
-  - wild bootstrap
+  - Bliss independence
   - shape-constrained regression
   - hypothesis testing
   - R package
 abstract: >
-  SIR (Synergy via Isotonic Regression) is a nonparametric R package for
-  drug-combination synergy testing. It defines interaction as the deviation from
-  a monotone-additive null fit by 2D isotonic regression and returns a
-  calibrated per-matrix p-value via a degrees-of-freedom-corrected wild
-  bootstrap, together with the interaction surface and effect size. Reference
-  implementations of the Bliss, HSA, Loewe, and ZIP baselines are included for
-  comparison.
+  SIR tests drug-combination viability matrices relative to Bliss independence
+  using isotonic single-agent curves and surfaces. A standardized excess test
+  uses a plug-in parametric bootstrap at exact Bliss with two-stage Monte Carlo.
+  Companion mean tests, region scans, activity summaries, missing-well and
+  replicate handling, and within-family BH screens are provided through an R
+  interface to the bundled Python implementation.
 authors:
   - family-names: Asiaee
     given-names: Amir
@@ -44,15 +43,12 @@ authors:
     affiliation: "Department of Biostatistics, Data Science, and Epidemiology, Georgia Cancer Center, Augusta University, Augusta, GA, USA"
 identifiers:
   - type: doi
-    value: 10.5281/zenodo.20604672
-    description: "Versioned DOI for SIR v0.1.0 on Zenodo."
-  - type: doi
-    value: 10.1101/2026.02.05.704019
+    value: 10.64898/2026.02.05.704019
     description: "bioRxiv preprint of the SIR method paper."
 preferred-citation:
   type: article
-  title: "A shape-constrained regression and wild bootstrap framework for reproducible drug synergy testing"
-  doi: 10.1101/2026.02.05.704019
+  title: "SIR: shape-constrained, calibrated testing of Bliss synergy in drug combination dose-response matrices"
+  doi: 10.64898/2026.02.05.704019
   year: 2026
   authors:
     - family-names: Asiaee
