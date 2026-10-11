@@ -1,0 +1,10 @@
+{
+ "q": 0.05,
+ "units": 23052,
+ "families": 54,
+ "within_families": 11482,
+ "pooled": 11637,
+ "both": 11244,
+ "families_only": 238,
+ "pooled_only": 393
+}

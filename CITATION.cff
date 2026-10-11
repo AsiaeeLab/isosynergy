@@ -43,6 +43,12 @@ authors:
     affiliation: "Department of Biostatistics, Data Science, and Epidemiology, Georgia Cancer Center, Augusta University, Augusta, GA, USA"
 identifiers:
   - type: doi
+    value: 10.5281/zenodo.23302246
+    description: "Versioned DOI of SIR 0.2.0 on Zenodo."
+  - type: doi
+    value: 10.5281/zenodo.23302266
+    description: "Per-unit DrugCombDB results (dataset version 2.0.0) on Zenodo."
+  - type: doi
     value: 10.64898/2026.02.05.704019
     description: "bioRxiv preprint of the SIR method paper."
 preferred-citation:

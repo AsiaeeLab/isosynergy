@@ -5,6 +5,8 @@ title: "SIR per-unit synergy test results for DrugCombDB (O'Neil and NCI-ALMANAC
 version: "2.0.0"
 date-released: "2026-10-11"
 license: CC-BY-4.0
+doi: 10.5281/zenodo.23302266
+url: "https://doi.org/10.5281/zenodo.23302266"
 repository-code: "https://github.com/AsiaeeLab/isosynergy"
 keywords:
   - drug combinations
@@ -39,6 +41,9 @@ authors:
     given-names: Kevin R.
     affiliation: "Department of Biostatistics, Data Science, and Epidemiology, Georgia Cancer Center, Augusta University, Augusta, GA, USA"
 identifiers:
+  - type: doi
+    value: 10.5281/zenodo.23302246
+    description: "SIR 0.2.0 software used to produce this table."
   - type: doi
     value: 10.64898/2026.02.05.704019
     description: "bioRxiv preprint of the SIR method paper."

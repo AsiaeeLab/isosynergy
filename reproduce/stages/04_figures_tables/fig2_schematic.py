@@ -40,6 +40,8 @@ for k in ('t_std', 'p_tstd', 'p_scan', 'mean_excess', 'mean_excess_se', 'activit
 assert abs(res.p_mean - row['p_companion']) < 1e-12
 Tref = CAP[-1][:res.B_used, 0]
 assert abs((1 + np.sum(Tref >= res.t_std)) / (res.B_used + 1) - res.p_tstd) < 1e-12
+# The reference statistics behind panel F (card 1), kept for the notebooks.
+np.savetxt(mc.paths.SIMS / 'fig2_reference_tsir.csv', Tref, header='t_sir_reference', comments='', fmt='%.10g')
 fam = prod[prod.family == row['family']]
 pf = np.sort(fam.p_tstd.values)
 nf = pf.size

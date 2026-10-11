@@ -68,4 +68,5 @@ CC-BY-4.0. DrugCombDB and NCI-ALMANAC remain subject to their own terms.
 
 ## Citation
 
-Please cite this record and the SIR method paper (see `CITATION.cff`).
+Please cite this record (DOI [10.5281/zenodo.23302266](https://doi.org/10.5281/zenodo.23302266)) and the
+SIR method paper (see `CITATION.cff`).

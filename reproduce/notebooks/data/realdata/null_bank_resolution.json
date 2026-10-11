@@ -1,0 +1,29 @@
+{
+ "oneil": {
+  "n": 22422,
+  "stage2_share": 0.07122469003657123,
+  "screened_per_target": 0.38587101953438585,
+  "reference_flags_per_plate": 0.4034368419206851,
+  "bank_pool_sets_median": 921.0,
+  "bank_pool_sets_range": [
+   753.0,
+   1490.0
+  ]
+ },
+ "almanac": {
+  "n": 6124,
+  "stage2_share": 0.06368386675375572,
+  "screened_per_target": 0.0,
+  "reference_flags_per_plate": 0.0,
+  "null_calls_with_fragility": 242,
+  "null_calls_loco_flag_share": 0.5661157024793388,
+  "null_calls_sa_flag_share": 0.8471074380165289,
+  "bank_pool_sets_median": 151.0,
+  "bank_pool_sets_range": [
+   123.0,
+   183.0
+  ],
+  "distinct_reference_noise_matrices_median": 302.0,
+  "note": "single plates draw one residual of one donor pair (2 positions = 2 signs): at most 2 x pool distinct reference noise matrices, so p-values below about 1 / (2 x pool) are not resolved by the bank even with B2 = 9,999"
+ }
+}

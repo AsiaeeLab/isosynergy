@@ -1,0 +1,9 @@
+{
+  "normal_reference_size_df15": 0.06039420195367154,
+  "pooling_max05": 0.0712,
+  "pooling_max005": 0.01705,
+  "block_max05": 0.05255,
+  "block_max005": 0.00655,
+  "normal_reference_size_df15_rounded_critical": 0.060483137786691975,
+  "pooling_empirical_scale_max05": 0.06965
+}

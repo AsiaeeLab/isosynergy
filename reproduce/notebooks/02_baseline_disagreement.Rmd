@@ -1,0 +1,338 @@
+---
+title: "Why a calibrated test is needed: Bliss, HSA, Loewe and ZIP disagree"
+subtitle: "Main Figure 1 and Supplementary Figures S4 and S5 (DrugCombDB and NCI-ALMANAC)"
+author: "SIR authors"
+date: "`r format(Sys.Date(), '%B %d, %Y')`"
+output:
+  html_document:
+    theme: flatly
+    toc: true
+    toc_float:
+      collapsed: false
+    toc_depth: 3
+    number_sections: true
+    code_folding: hide
+    fig_width: 9
+    fig_height: 5
+    df_print: kable
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE, comment = "#>",
+                      fig.align = "center", dpi = 110)
+source("_common.R")
+suppressPackageStartupMessages({
+  library(SIR); library(dplyr); library(tidyr); library(patchwork); library(reticulate)
+})
+options(width = 110)
+knitr::knit_hooks$set(inline = function(x) {
+  if (is.numeric(x)) format(x, digits = 4, scientific = FALSE, big.mark = if (all(x == round(x)) && all(abs(x) >= 1000)) "," else "") else as.character(x)
+})
+theme_report <- theme_report + theme(plot.title = element_text(face = "bold", size = 10), legend.position = "none")
+theme_set(theme_report)
+kb <- function(x, digits = 3, ...) kbl_report(x, digits = digits, ...)
+METHODS <- c("Bliss", "HSA", "Loewe", "ZIP")
+```
+
+# Summary
+
+```{r summary-numbers, include=FALSE}
+st1 <- read_result("simulations/baseline_disagreement_drugcombdb.csv")
+st2 <- read_result("simulations/baseline_disagreement_nci_almanac.csv")
+pr <- function(st, metric) { x <- st[st$metric == metric & st$method1 < st$method2, ]; setNames(x$value, paste(x$method1, x$method2, sep = "-")) }
+c1 <- pr(st1, "pearson_corr"); d1 <- pr(st1, "pos_disagree_rate"); j1 <- pr(st1, "top_jaccard")
+c2 <- pr(st2, "pearson_corr"); d2 <- pr(st2, "pos_disagree_rate"); j2 <- pr(st2, "top_jaccard")
+lw <- grepl("Loewe", names(d2))
+```
+
+**Bliss, HSA, Loewe and ZIP disagree about which drug combinations are synergistic, by amounts that change conclusions: on DrugCombDB the four scores differ in sign on `r sprintf("%.0f", 100 * min(d1))`% to `r sprintf("%.0f", 100 * max(d1))`% of matrices, and the top-5% hit lists of Loewe and ZIP share only `r sprintf("%.2f", j1["Loewe-ZIP"])` of their union.** The same pattern holds on `r format(st2$n[1], big.mark = ",")` NCI-ALMANAC matrices scored with one implementation of all four models, where sign disagreement with Loewe reaches `r sprintf("%.0f", 100 * min(d2[lw]))`% to `r sprintf("%.0f", 100 * max(d2[lw]))`%. Because a score carries no error rate and its sign is close to a coin flip even for exactly independent drugs, a calibrated test against a declared reference (here Bliss) is needed.
+
+```{r key-numbers}
+data.frame(
+  Quantity = c("DrugCombDB matrices with all four scores", "Pearson r, Bliss-ZIP", "Pearson r, Loewe-ZIP", "Pearson r, Loewe-Bliss",
+               "Sign disagreement, range over six pairs", "Top-5% Jaccard, Loewe-ZIP",
+               "NCI-ALMANAC matrices with all four scores (of 20,000)", "NCI-ALMANAC Loewe sign disagreement, range", "NCI-ALMANAC smallest top-5% Jaccard"),
+  Value = c(format(st1$n[1], big.mark = ","), sprintf("%.3f", c1["Bliss-ZIP"]), sprintf("%.3f", c1["Loewe-ZIP"]), sprintf("%.3f", c1["Bliss-Loewe"]),
+            sprintf("%.1f%% to %.1f%%", 100 * min(d1), 100 * max(d1)), sprintf("%.3f", j1["Loewe-ZIP"]), format(st2$n[1], big.mark = ","),
+            sprintf("%.1f%% to %.1f%%", 100 * min(d2[lw]), 100 * max(d2[lw])), sprintf("%.3f", min(j2)))) |> kb()
+```
+
+The numbers quoted in the paper for these figures reproduce (Sections 4.3 and 6); the matching tables are there.
+
+# The question
+
+## Background
+
+A synergy score answers "did the combination do more than expected?", and the answer depends entirely on what is expected. Four reference models are in common use, and each yields a score for every cell of a dose-response matrix (we use the mean over the combination cells as the matrix-level score):
+
+* **Bliss independence** (the reference SIR tests). Two drugs acting independently multiply their surviving fractions. With $Y_{i0}$ and $Y_{0j}$ the viabilities of the single agents,
+$$E^{\mathrm{Bliss}}_{ij} = Y_{i0}\,Y_{0j}, \qquad S^{\mathrm{Bliss}}_{ij} = E^{\mathrm{Bliss}}_{ij} - Y_{ij}.$$
+* **Highest single agent (HSA).** The combination should be at least as good as the better single agent,
+$$E^{\mathrm{HSA}}_{ij} = \min(Y_{i0},\, Y_{0j}), \qquad S^{\mathrm{HSA}}_{ij} = E^{\mathrm{HSA}}_{ij} - Y_{ij}.$$
+* **Loewe additivity.** A drug combined with itself must be additive in dose. For an observed viability $y = Y_{ij}$, let $D_A(y)$ and $D_B(y)$ be the single-agent doses that alone give viability $y$ (inverses of the fitted monotone curves). The combination index is
+$$\mathrm{CI}_{ij} = \frac{d_{A,i}}{D_A(y)} + \frac{d_{B,j}}{D_B(y)}, \qquad S^{\mathrm{Loewe}}_{ij} = 1 - \mathrm{CI}_{ij},$$
+so $\mathrm{CI} < 1$ means synergy. The inverse does not exist when $y$ lies outside the range reached by a single agent, and then the score is missing.
+* **Zero interaction potency (ZIP).** The package smooths the single-agent curves with four-parameter logistic fits and applies the Bliss formula on the inhibition scale, $E^{\mathrm{ZIP}}_{ij} = \hat I_A + \hat I_B - \hat I_A \hat I_B$ and $S^{\mathrm{ZIP}}_{ij} = (1 - Y_{ij}) - E^{\mathrm{ZIP}}_{ij}$. The DrugCombDB table reports ZIP scores with SynergyFinder conventions, which we do not recompute.
+
+> **Question.** If the same dose-response matrices are scored by Bliss, HSA, Loewe and ZIP, how often do the scores agree on the ranking, on the sign (synergy or not), and on which matrices are the top hits?
+
+## Why it is hard, and why it motivates a test
+
+Each reference model encodes a different null, so disagreement is expected in principle; the question is how large it is on real screens. A score also carries no error rate: a positive Bliss score arises from noise alone about half of the time. A calibrated test removes that ambiguity for one declared reference model, and the rest of this notebook measures how much a user's conclusions would change if they had picked another model.
+
+## The three disagreement metrics
+
+For two methods $m$ and $m'$ with matrix-level scores $x_k$ and $x'_k$ over $n$ matrices:
+
+* **Pearson correlation** of the scores, $r = \mathrm{cor}(x, x')$.
+* **Sign disagreement rate**, the fraction of matrices for which exactly one method reports synergy (a positive score): $n^{-1}\sum_k \mathbb{1}\{(x_k > 0) \ne (x'_k > 0)\}$.
+* **Top-5% Jaccard overlap**. Let $\mathcal{T}_m = \{k : x_k \ge q_{0.95}(x)\}$ be the 5% of matrices with the largest score under method $m$ (type-8 sample quantile). Then $J = |\mathcal{T}_m \cap \mathcal{T}_{m'}| / |\mathcal{T}_m \cup \mathcal{T}_{m'}|$. Identical top sets give 1; unrelated top sets give about 0.03.
+
+A worked example on three matrices makes the metrics concrete:
+
+```{r toy}
+toy <- data.frame(matrix = 1:6, A = c(2.0, 1.5, -0.2, 0.4, -1.0, 3.0), B = c(1.0, -0.3, 0.1, 0.8, -0.5, 2.5))
+toy$A_pos <- toy$A > 0; toy$B_pos <- toy$B > 0; toy$disagree <- toy$A_pos != toy$B_pos
+kb(toy, caption = "Six matrices scored by two methods: the sign disagrees in matrices 2 and 3.")
+cat("Pearson r:", round(cor(toy$A, toy$B), 3), "| sign disagreement:", mean(toy$disagree), "\n")
+top_A <- toy$A >= quantile(toy$A, 0.5, type = 8); top_B <- toy$B >= quantile(toy$B, 0.5, type = 8)
+cat("Top-50% Jaccard (top 5% is the same formula with q = 0.95):", sum(top_A & top_B) / sum(top_A | top_B), "\n")
+```
+
+# The data
+
+Three results are read. `simulations/baseline_disagreement_drugcombdb.csv` holds the three metrics for all 391,652 DrugCombDB matrices with four finite scores (computed by the pipeline from the published score table, `inputs/drugcombdb_block_scores.parquet`, which is 7.5 MB and is not copied here). `simulations/baseline_scatter_subsample.csv` is a random subsample of 5,000 of those matrices with their four scores. `inputs/nci_almanac_baseline_scores.parquet` has the scores we computed with the package's four implementations on 20,000 randomly sampled NCI-ALMANAC matrices.
+
+```{r load}
+nci <- read_result("inputs/nci_almanac_baseline_scores.parquet")
+sub <- read_result("simulations/baseline_scatter_subsample.csv")
+cat("DrugCombDB metrics file:", nrow(st1), "rows; matrices per row (n):", unique(st1$n), "\n")
+cat("DrugCombDB subsample:", nrow(sub), "rows x", ncol(sub), "columns:", paste(names(sub), collapse = ", "), "\n")
+cat("NCI-ALMANAC table:", nrow(nci), "rows x", ncol(nci), "columns:", paste(names(nci), collapse = ", "), "\n")
+complete_cases <- function(d) d[stats::complete.cases(d[METHODS]) & is.finite(rowSums(d[METHODS])), METHODS]
+X1 <- complete_cases(sub); X2 <- complete_cases(nci)
+n_dcdb <- unique(st1$n)
+kb(rbind(`NCI-ALMANAC sample` = colSums(is.na(nci[METHODS]))), caption = "Missing scores per method in the NCI-ALMANAC sample.")
+data.frame(Table = c("DrugCombDB (all matrices, from the metrics file)", "DrugCombDB subsample", "NCI-ALMANAC sample"),
+           Rows = c(n_dcdb, nrow(sub), nrow(nci)), `All four scores finite` = c(n_dcdb, nrow(X1), nrow(X2)),
+           `Paper` = c(391652, 5000, 7727), check.names = FALSE) |> kb(format.args = list(big.mark = ","))
+```
+
+Score scale: DrugCombDB reports scores on a percentage scale and the NCI-ALMANAC scores are on the viability-fraction scale; correlation, sign and top-set overlap do not change under a positive rescaling.
+
+```{r scales}
+sc <- function(X, nm) do.call(rbind, lapply(METHODS, function(m) data.frame(Table = nm, Method = m, Median = median(X[[m]]), `Share positive` = mean(X[[m]] > 0), check.names = FALSE)))
+kb(rbind(sc(X1, "DrugCombDB (5,000 subsample)"), sc(X2, "NCI-ALMANAC sample")), digits = 3, caption = "Median score and the fraction of positive scores.")
+```
+
+The DrugCombDB metrics were computed on `r n_dcdb` matrices with four finite scores, the count quoted in the paper; the subsample below stands in for the full table when we need the scores themselves. In the NCI-ALMANAC sample all 20,000 matrices have Bliss, HSA and ZIP scores but `r sum(is.na(nci$Loewe))` (`r sprintf("%.0f", 100 * mean(is.na(nci$Loewe)))`%) have no Loewe score, which leaves `r nrow(X2)` complete matrices, again as in the paper. The scales differ, as expected: DrugCombDB medians (subsample) are in percentage points (Loewe `r sprintf("%.2f", median(X1$Loewe))`) and NCI medians are fractions (Loewe `r sprintf("%.3f", median(X2$Loewe))`). In the DrugCombDB subsample the share of positive scores already differs by method, from `r sprintf("%.0f", 100 * mean(X1$Loewe > 0))`% (Loewe) to `r sprintf("%.0f", 100 * mean(X1$HSA > 0))`% (HSA), with Bliss at `r sprintf("%.0f", 100 * mean(X1$Bliss > 0))`%, so the models do not even agree on how common synergy is.
+
+**Decision point.** There is nothing to clean: the metrics use the complete cases of each table, as the pipeline does. We first compute the metrics on DrugCombDB.
+
+# Figure 1: disagreement among the four scores on DrugCombDB
+
+## Rationale
+
+Figure 1 puts the three metrics side by side for the six method pairs. We draw it in R from the metrics file the pipeline wrote, check those metrics on the 5,000-matrix subsample, and compare with the numbers quoted in the paper.
+
+## The metrics, and a check on the subsample
+
+```{r metrics-fn}
+disagreement <- function(X, top_q = 0.05) {
+  k <- length(METHODS); V <- as.matrix(X[METHODS])
+  cor_m <- cor(V)
+  pos <- V > 0
+  dis <- outer(1:k, 1:k, Vectorize(function(i, j) mean(pos[, i] != pos[, j])))
+  thr <- apply(V, 2, quantile, probs = 1 - top_q, type = 8, names = FALSE)
+  top <- sweep(V, 2, thr, ">=")
+  jac <- outer(1:k, 1:k, Vectorize(function(i, j) sum(top[, i] & top[, j]) / sum(top[, i] | top[, j])))
+  lst <- list(pearson_corr = cor_m, pos_disagree_rate = dis, top_jaccard = jac)
+  lapply(lst, function(M) { dimnames(M) <- list(METHODS, METHODS); M })
+}
+long_pairs <- function(res) {
+  pr <- t(combn(METHODS, 2))
+  do.call(rbind, lapply(seq_len(nrow(pr)), function(i) data.frame(
+    pair = paste(pr[i, 1], pr[i, 2], sep = "-"),
+    pearson_corr = res$pearson_corr[pr[i, 1], pr[i, 2]], pos_disagree_rate = res$pos_disagree_rate[pr[i, 1], pr[i, 2]],
+    top_jaccard = res$top_jaccard[pr[i, 1], pr[i, 2]])))
+}
+as_mats <- function(st) lapply(split(st, st$metric), function(d) {
+  M <- matrix(NA_real_, 4, 4, dimnames = list(METHODS, METHODS)); M[cbind(d$method1, d$method2)] <- d$value; M })
+res1 <- as_mats(st1)                    # all 391,652 matrices (pipeline output)
+tab1 <- long_pairs(res1)
+res1_sub <- disagreement(X1)   # the same metrics on the 5,000-matrix subsample
+g1 <- function(pair, col) tab1[tab1$pair == pair, col]
+kb(tab1, digits = 4, caption = "DrugCombDB, all six method pairs (all matrices, from the metrics file).")
+```
+
+```{r fig1-compare}
+worst <- max(sapply(names(res1), function(mt) max(abs(res1[[mt]][upper.tri(res1[[mt]])] - res1_sub[[mt]][upper.tri(res1_sub[[mt]])]))))
+cat("Largest absolute difference over the 18 off-diagonal cells between the full-table metrics and the same metrics on the 5,000-matrix subsample:", format(worst, digits = 3), "\n")
+```
+
+```{r fig1-gg, fig.width=11, fig.height=3.6, fig.cap="Figure 1 in ggplot: lower triangle of each metric matrix."}
+heat <- function(M, title, lim, pal) {
+  d <- expand.grid(row = METHODS[-1], col = METHODS[-4], stringsAsFactors = FALSE)
+  d$v <- mapply(function(r, c) if (match(c, METHODS) < match(r, METHODS)) M[r, c] else NA_real_, d$row, d$col)
+  d$row <- factor(d$row, levels = rev(METHODS[-1])); d$col <- factor(d$col, levels = METHODS[-4])
+  ggplot(na.omit(d), aes(col, row, fill = v)) + geom_tile(colour = "white", linewidth = 1) +
+    geom_text(aes(label = sprintf("%.2f", v)), size = 3.4) + scale_x_discrete(drop = FALSE) + scale_y_discrete(drop = FALSE) +
+    scale_fill_gradientn(colours = pal, limits = lim, name = NULL) + coord_equal() +
+    labs(title = title, x = NULL, y = NULL) + theme(panel.grid = element_blank(), legend.position = "bottom", legend.key.width = unit(1.2, "cm"))
+}
+(heat(res1$pearson_corr, "A. Pearson correlation r", c(-1, 1), c("#2166ac", "white", "#b2182b")) |
+ heat(res1$pos_disagree_rate, "B. Sign disagreement rate", c(0, 1), hcl.colors(9, "YlGnBu", rev = TRUE)) |
+ heat(res1$top_jaccard, "C. Jaccard overlap, top 5%", c(0, 1), hcl.colors(9, "YlGnBu", rev = TRUE)))
+```
+
+**What do we see?** Panel A (Pearson): Bliss and ZIP agree strongly (`r sprintf("%.2f", g1("Bliss-ZIP", "pearson_corr"))`), Bliss and HSA fairly well (`r sprintf("%.2f", g1("Bliss-HSA", "pearson_corr"))`), and Loewe is only weakly related to Bliss (`r sprintf("%.2f", g1("Bliss-Loewe", "pearson_corr"))`) and to ZIP (`r sprintf("%.2f", g1("Loewe-ZIP", "pearson_corr"))`). Panel B (sign): every pair of methods differs in sign on at least `r sprintf("%.0f", 100 * min(tab1$pos_disagree_rate))`% of the matrices, and the largest rate is `r sprintf("%.0f", 100 * max(tab1$pos_disagree_rate))`% (HSA-ZIP); even Bliss and ZIP, the most correlated pair, differ in sign on `r sprintf("%.0f", 100 * g1("Bliss-ZIP", "pos_disagree_rate"))`% of matrices. Panel C (top 5%): the best-agreeing pair (Bliss-ZIP) shares `r sprintf("%.2f", g1("Bliss-ZIP", "top_jaccard"))` of its union, and Loewe-ZIP only `r sprintf("%.2f", g1("Loewe-ZIP", "top_jaccard"))`, so the hits that Loewe and ZIP share are only about a third of all the hits either one reports. The same metrics on the 5,000-matrix subsample are within `r format(worst, digits = 2)` of the full-table values in every cell.
+
+## Numbers quoted in the paper
+
+```{r paper-checks-1}
+chk1 <- data.frame(
+  Claim = c("Matrices with all four scores finite", "Pearson r, Bliss-ZIP", "Pearson r, Loewe-ZIP", "Pearson r, Loewe-Bliss",
+            "Sign disagreement, smallest over the six pairs", "Sign disagreement, largest over the six pairs",
+            "Top-5% Jaccard, Loewe-ZIP"),
+  Paper = c("391,652", "0.92", "0.28", "0.33", "21%", "34%", "0.36"),
+  Computed = c(format(n_dcdb, big.mark = ","), sprintf("%.4f", g1("Bliss-ZIP", "pearson_corr")), sprintf("%.4f", g1("Loewe-ZIP", "pearson_corr")),
+               sprintf("%.4f", g1("Bliss-Loewe", "pearson_corr")), sprintf("%.2f%%", 100 * min(tab1$pos_disagree_rate)),
+               sprintf("%.2f%%", 100 * max(tab1$pos_disagree_rate)), sprintf("%.4f", g1("Loewe-ZIP", "top_jaccard"))),
+  Rounded = c(format(n_dcdb, big.mark = ","), sprintf("%.2f", g1("Bliss-ZIP", "pearson_corr")), sprintf("%.2f", g1("Loewe-ZIP", "pearson_corr")),
+              sprintf("%.2f", g1("Bliss-Loewe", "pearson_corr")), sprintf("%.0f%%", 100 * min(tab1$pos_disagree_rate)),
+              sprintf("%.0f%%", 100 * max(tab1$pos_disagree_rate)), sprintf("%.2f", g1("Loewe-ZIP", "top_jaccard"))))
+chk1$Match <- ifelse(chk1$Paper == chk1$Rounded, "match", "MISMATCH")
+kb(chk1)
+```
+
+**What do we see?** All seven numbers match after rounding to the precision the paper uses. The sign-disagreement range of 21% to 34% runs from Bliss-ZIP (`r sprintf("%.2f", 100 * g1("Bliss-ZIP", "pos_disagree_rate"))`%) to HSA-ZIP (`r sprintf("%.2f", 100 * g1("HSA-ZIP", "pos_disagree_rate"))`%). `reproduce/MANIFEST.md` lists the same quantities (0.92, 0.28, 0.33, 21 to 34%, 0.36).
+
+**Decision point.** The summary statistics could hide structure, such as a few extreme matrices driving a correlation or a clean scale change between methods. The scatter plots show which it is.
+
+# Figure S4: pairwise scatter plots of the scores
+
+## Rationale
+
+Correlations summarize a relationship in one number. Figure S4 shows the six pairwise scatter plots on a random subsample of 5,000 of the matrices, so one can see whether disagreement is a shift in scale or a different ordering.
+
+```{r s4-gg, fig.width=9, fig.height=6, fig.cap="Figure S4 in ggplot, from the 5,000-matrix subsample."}
+pairs <- list(c("Bliss", "HSA"), c("Bliss", "ZIP"), c("HSA", "ZIP"), c("Bliss", "Loewe"), c("HSA", "Loewe"), c("ZIP", "Loewe"))
+long <- bind_rows(lapply(pairs, function(p) data.frame(x = sub[[p[1]]], y = sub[[p[2]]], panel = paste(p[1], "vs", p[2]), xl = p[1], yl = p[2])))
+long$panel <- factor(long$panel, levels = vapply(pairs, function(p) paste(p[1], "vs", p[2]), ""))
+ggplot(long, aes(x, y)) + geom_hline(yintercept = 0, colour = "grey80") + geom_vline(xintercept = 0, colour = "grey80") +
+  geom_point(size = 0.4, alpha = 0.25, colour = "#46648f") + geom_abline(linetype = "dashed", colour = "grey30") +
+  facet_wrap(~panel, scales = "free", nrow = 2) + labs(x = "First method's score", y = "Second method's score")
+```
+
+```{r s4-numbers}
+subR <- cor(sub[METHODS])
+sub_pairs <- data.frame(pair = vapply(pairs, function(p) paste(p[1], p[2], sep = "-"), ""),
+                        `r (5,000 subsample)` = vapply(pairs, function(p) subR[p[1], p[2]], 0),
+                        `r (all complete matrices)` = vapply(pairs, function(p) res1$pearson_corr[p[1], p[2]], 0),
+                        `sign-discordant share in the subsample` = vapply(pairs, function(p) mean((sub[[p[1]]] > 0) != (sub[[p[2]]] > 0)), 0), check.names = FALSE)
+kb(sub_pairs, digits = 3)
+cat("Subsample size:", nrow(sub), "of", n_dcdb, "complete matrices\n")
+```
+
+**What do we see?** The subsample has `r nrow(sub)` of `r n_dcdb` matrices, and its correlations are within `r sprintf("%.3f", max(abs(sub_pairs[[2]] - sub_pairs[[3]])))` of the full-table values, so the plots are representative. The Bliss-ZIP panel is a tight, nearly linear band along the identity (subsample $r =$ `r sprintf("%.2f", sub_pairs[[2]][2])`, the paper's 0.92 on all matrices). The HSA panels with Bliss and ZIP are broader but still positively sloped. The three Loewe panels are broad clouds with no clear relationship to the other score and many points in the off-diagonal quadrants (sign-discordant points): in the subsample `r sprintf("%.0f", 100 * sub_pairs[[4]][4])`% of matrices have opposite signs under Bliss and Loewe and `r sprintf("%.0f", 100 * sub_pairs[[4]][6])`% under ZIP and Loewe. The disagreement is therefore a different ordering of matrices, not a rescaling.
+
+**Decision point.** DrugCombDB scores come from its curators' pipeline, so we repeat the comparison on scores computed by one implementation of all four models.
+
+# Figure S5: disagreement on NCI-ALMANAC
+
+## Rationale
+
+DrugCombDB scores are computed by its curators. As an independent check we scored 20,000 randomly sampled NCI-ALMANAC matrices with the package's own four implementations (`bliss_score()`, `hsa_score()`, `loewe_score()`, `zip_score()`) and applied the same three metrics. Loewe is missing when the observed viability lies outside the range of the single-agent fits, so only a subset of matrices has all four scores.
+
+```{r s5-tab}
+res2 <- disagreement(X2)
+tab2 <- long_pairs(res2)
+kb(tab2, digits = 4, caption = "NCI-ALMANAC sample, all six method pairs (recomputed in R).")
+stage2 <- st2
+worst2 <- max(sapply(c("pearson_corr", "pos_disagree_rate", "top_jaccard"), function(mt) {
+  s <- stage2[stage2$metric == mt, ]; max(abs(s$value - mapply(function(a, b) res2[[mt]][a, b], s$method1, s$method2)))}))
+cat("Largest absolute difference from the stage output:", format(worst2, digits = 3), "\n")
+```
+
+```{r s5-gg, fig.width=11, fig.height=3.6, fig.cap="Figure S5 rebuilt in ggplot."}
+(heat(res2$pearson_corr, "A. Pearson correlation r", c(-1, 1), c("#2166ac", "white", "#b2182b")) |
+ heat(res2$pos_disagree_rate, "B. Sign disagreement rate", c(0, 1), hcl.colors(9, "YlGnBu", rev = TRUE)) |
+ heat(res2$top_jaccard, "C. Jaccard overlap, top 5%", c(0, 1), hcl.colors(9, "YlGnBu", rev = TRUE)))
+```
+
+```{r s5-checks}
+lo <- tab2[grepl("Loewe", tab2$pair), ]
+chk2 <- data.frame(
+  Claim = c("Sampled matrices", "Matrices with all four scores finite", "Pearson r, Bliss-ZIP", "Loewe sign disagreement, smallest over Bliss/HSA/ZIP",
+            "Loewe sign disagreement, largest", "Smallest top-5% Jaccard"),
+  Paper = c("20,000", "7,727", "> 0.99", "36%", "40%", "0.06"),
+  Computed = c(format(nrow(nci), big.mark = ","), format(nrow(X2), big.mark = ","), sprintf("%.4f", tab2$pearson_corr[tab2$pair == "Bliss-ZIP"]),
+               sprintf("%.2f%%", 100 * min(lo$pos_disagree_rate)), sprintf("%.2f%%", 100 * max(lo$pos_disagree_rate)), sprintf("%.4f", min(tab2$top_jaccard))))
+chk2$Match <- c(nrow(nci) == 20000, nrow(X2) == 7727, tab2$pearson_corr[tab2$pair == "Bliss-ZIP"] > 0.99,
+                round(100 * min(lo$pos_disagree_rate)) == 36, round(100 * max(lo$pos_disagree_rate)) == 40, round(min(tab2$top_jaccard), 2) == 0.06) |> ifelse("match", "MISMATCH")
+kb(chk2)
+```
+
+The Pearson correlations with Loewe on this table are near zero. A few matrices have extreme Loewe scores (the most negative is `r sprintf("%.0f", min(X2$Loewe))` on a scale where most scores lie within a few tenths), and Pearson correlation is sensitive to such values. Rank correlation, sign disagreement and top-set overlap are not, so we check the Loewe pairs with Spearman's coefficient:
+
+```{r s5-spearman}
+sp <- cor(X2, method = "spearman")
+kb(data.frame(pair = tab2$pair, Pearson = tab2$pearson_corr,
+              Spearman = mapply(function(p) sp[strsplit(p, "-")[[1]][1], strsplit(p, "-")[[1]][2]], tab2$pair),
+              check.names = FALSE), digits = 3, row.names = FALSE, caption = "NCI-ALMANAC sample: Pearson and Spearman correlation.")
+cat("Matrices with |Loewe| >= 99:", sum(abs(X2$Loewe) >= 99), "of", nrow(X2), "\n")
+```
+
+**What do we see?** Bliss and ZIP are almost the same score here (r = `r sprintf("%.4f", tab2$pearson_corr[tab2$pair == "Bliss-ZIP"])`, sign disagreement `r sprintf("%.2f", 100 * tab2$pos_disagree_rate[tab2$pair == "Bliss-ZIP"])`%, top-5% Jaccard `r sprintf("%.2f", tab2$top_jaccard[tab2$pair == "Bliss-ZIP"])`), which follows from our ZIP being the Bliss formula on smoothed single-agent curves; it is stronger than the 0.92 of the curated DrugCombDB ZIP scores. Every pair with Loewe disagrees strongly: the sign differs on `r sprintf("%.0f", 100 * min(lo$pos_disagree_rate))`% to `r sprintf("%.0f", 100 * max(lo$pos_disagree_rate))`% of matrices (HSA-Loewe the largest) and the top-5% Jaccard overlap is only `r sprintf("%.2f", min(tab2$top_jaccard))` to `r sprintf("%.2f", max(lo$top_jaccard))`, only a little above the 0.03 that two unrelated top sets would share. Pearson correlations with Loewe are close to zero, partly because of a few extreme Loewe scores. The Spearman coefficients with Loewe are `r sprintf("%.2f", sp["Loewe", "Bliss"])` (Bliss), `r sprintf("%.2f", sp["Loewe", "HSA"])` (HSA) and `r sprintf("%.2f", sp["Loewe", "ZIP"])` (ZIP): still weak, so the disagreement is not an artifact of outliers, and the sign and overlap metrics, which do not depend on extreme values, tell the same story. All six paper checks match.
+
+**Decision point.** The metrics show that the choice of model changes conclusions. The last section scores one matrix four ways with the package and then asks what a calibrated test adds.
+
+# How to use the code
+
+The package computes the four reference surfaces from a long-format table with columns `doseA`, `doseB` and `response` (viability). This makes the disagreement concrete on one matrix. We take a matrix that obeys Bliss independence exactly (no noise, no synergy by construction) and score it four ways.
+
+```{r use-exact}
+d <- c(0, 0.1, 0.3, 1, 3)
+hill <- function(x, ec, h) 1 / (1 + (x / ec)^h)
+a <- hill(d, 0.8, 1.2); b <- hill(d, 0.5, 1.5)
+Y0 <- outer(a, b)                                     # exact Bliss: Y_ij = a_i b_j
+to_long <- function(Y) { g <- expand.grid(i = 1:5, j = 1:5); data.frame(doseA = d[g$i], doseB = d[g$j], response = Y[cbind(g$i, g$j)]) }
+scorers <- list(Bliss = bliss_score, HSA = hsa_score, Loewe = loewe_score, ZIP = zip_score)
+interior <- function(S) mean(S[-1, -1], na.rm = TRUE)
+score_all <- function(Y) vapply(scorers, function(f) interior(f(to_long(Y), "viability")$synergy), numeric(1))
+ex <- score_all(Y0)
+kb(data.frame(Method = names(ex), `Mean score over combination cells` = unname(ex), check.names = FALSE), digits = 4,
+   caption = "One matrix with exactly Bliss-independent drugs.")
+```
+
+By construction the matrix has no interaction under Bliss, and Bliss and ZIP score about zero. HSA and Loewe do not, because they define "no interaction" differently, so a user who picked them would report synergy for a pair of independent drugs.
+
+Noise makes the sign unreliable even for the model that is correct. The next chunk adds Gaussian noise (SD 0.05) to the same exact-Bliss surface 300 times and records how often each method reports a positive matrix-level score:
+
+```{r use-noise}
+set.seed(11)
+sims <- t(vapply(1:300, function(r) { Yn <- Y0 + matrix(rnorm(25, sd = 0.05), 5); Yn[1, 1] <- 1; score_all(Yn) }, numeric(4)))
+kb(data.frame(Method = colnames(sims), `Share with score > 0` = unname(colMeans(sims > 0, na.rm = TRUE)),
+              `Mean score` = unname(colMeans(sims, na.rm = TRUE)), `Missing` = unname(colSums(is.na(sims))), check.names = FALSE), digits = 3,
+   caption = "300 noisy copies of an exactly Bliss-independent matrix.")
+```
+
+A score has no error rate attached. `sir_fit()` tests Bliss synergy with a p-value calibrated at exact Bliss, for the same kind of matrix:
+
+```{r use-sir}
+Yn <- Y0 + matrix(rnorm(25, sd = 0.05), 5); Yn[1, 1] <- 1
+fit <- sir_fit(Yn, doses = list(d, d), design = "S", noise = sir_noise_parametric(sd = 0.05), B = 399, B2 = 999, seed = 1)
+summary(fit)
+```
+
+**What do we see?** On the noise-free Bliss-independent matrix the mean scores are Bliss `r sprintf("%.4f", ex["Bliss"])`, ZIP `r sprintf("%.4f", ex["ZIP"])`, HSA `r sprintf("%.3f", ex["HSA"])` and Loewe `r sprintf("%.3f", ex["Loewe"])`. With noise (SD 0.05), the sign of the score is close to a coin flip for Bliss (`r sprintf("%.0f", 100 * mean(sims[, "Bliss"] > 0))`% positive) and ZIP (`r sprintf("%.0f", 100 * mean(sims[, "ZIP"] > 0))`%) even though there is no synergy at all, HSA is positive in `r sprintf("%.0f", 100 * mean(sims[, "HSA"] > 0))`% of copies because its null is a different surface, and Loewe is positive in `r sprintf("%.0f", 100 * mean(sims[, "Loewe"] > 0))`% with a negative mean of `r sprintf("%.2f", mean(sims[, "Loewe"]))`. The SIR fit on one noisy copy gives $p =$ `r sprintf("%.2f", fit$p_tstd)` (no synergy detected), a statement with a known error rate under the Bliss null.
+
+# Conclusions
+
+**What we found.** The matrix-level synergy scores of the four reference models are far from interchangeable. Bliss and ZIP are the closest pair on DrugCombDB (r = `r sprintf("%.2f", g1("Bliss-ZIP", "pearson_corr"))`), yet they still differ in sign on `r sprintf("%.0f", 100 * g1("Bliss-ZIP", "pos_disagree_rate"))`% of matrices. Loewe is the outlier: r = `r sprintf("%.2f", g1("Loewe-ZIP", "pearson_corr"))` with ZIP and `r sprintf("%.2f", g1("Bliss-Loewe", "pearson_corr"))` with Bliss, and a top-5% overlap of `r sprintf("%.2f", g1("Loewe-ZIP", "top_jaccard"))` with ZIP. On NCI-ALMANAC the Loewe pairs differ in sign on `r sprintf("%.0f", 100 * min(lo$pos_disagree_rate))`% to `r sprintf("%.0f", 100 * max(lo$pos_disagree_rate))`% of matrices. All paper numbers checked here match the pipeline output, the NCI-ALMANAC metrics recomputed in R agree with the stage output to machine precision, and the scatter plots show that the disagreement is a different ordering of matrices, not a rescaling.
+
+**What it means.** A hit list depends on the reference model, and the sign of a raw score is not evidence: with SD 0.05 noise, exactly Bliss-independent matrices have a positive Bliss score in `r sprintf("%.0f", 100 * mean(sims[, "Bliss"] > 0))`% of copies. SIR therefore fixes the reference (Bliss on mean viability) and reports a p-value calibrated at that reference, a region claim, an effect size and a family-wise false discovery rate. Disagreement between models is not an argument that one is wrong; it is the reason the reference has to be declared.
+
+**Limits.** DrugCombDB scores are the curators' values, which we do not recompute. Our NCI-ALMANAC implementation of ZIP applies the Bliss formula to smoothed single-agent curves, so it tracks Bliss more closely than the DrugCombDB ZIP does, and Loewe is undefined for `r sprintf("%.0f", 100 * mean(is.na(nci$Loewe)))`% of the sampled matrices, so the NCI comparison covers the `r nrow(X2)` matrices where all four scores exist. The matrix-level score is the mean over combination cells; cell-level or region-level agreement was not measured. These comparisons say how much the models disagree, not which is correct.
+
+**What to report.** The three metrics (Pearson r, sign disagreement, top-5% Jaccard) for every pair of methods, the number of matrices with complete scores and how missing scores arise, and the reference model used for any calibrated test.

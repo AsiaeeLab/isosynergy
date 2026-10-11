@@ -1,0 +1,37 @@
+{
+ "sets": 23052,
+ "wells_held_out": 368832,
+ "median_rmse_iso": 0.06439516696537778,
+ "iqr_rmse_iso": [
+  0.04845669061613039,
+  0.08540444549153568
+ ],
+ "median_rmse_iso_noncorner": 0.06507504037270649,
+ "iqr_rmse_iso_noncorner": [
+  0.048613889111484565,
+  0.08658511466296961
+ ],
+ "median_rmse_bliss": 0.08423095865605532,
+ "iqr_rmse_bliss": [
+  0.06056381564792131,
+  0.11841394744285813
+ ],
+ "median_rmse_bliss_noncorner": 0.08393112363435387,
+ "iqr_rmse_bliss_noncorner": [
+  0.060201186217014695,
+  0.11798427585558781
+ ],
+ "median_rmse_iso_clip": 0.06419142915306386,
+ "iqr_rmse_iso_clip": [
+  0.04841402668656207,
+  0.08657622580418181
+ ],
+ "median_rmse_iso_clip_noncorner": 0.06316635621128577,
+ "iqr_rmse_iso_clip_noncorner": [
+  0.04744088459059982,
+  0.08590858066696491
+ ],
+ "share_sets_iso_better_than_bliss": 0.7257070969980912,
+ "median_paired_difference_iso_minus_bliss": -0.018647780034907115,
+ "seconds": 0.9
+}

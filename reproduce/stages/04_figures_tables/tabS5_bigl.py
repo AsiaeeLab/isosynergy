@@ -138,10 +138,10 @@ def main():
         surface=int(((g.fit_err == 0) & (g.surf_err != 0)).sum()),
         no_result_share=float((~g.ok).mean())) for setting,g in single.groupby('setting')}
     bt4 = bt[(bt.r == 4) & bt.method.str.contains('ship_eq|vb_eq|vb_model',regex=True)]
-    low_time, high_time = bt4['median'].min(), bt4['p95'].min()
+    low_time, high_time = bt4['median'].min(), bt4['median'].max()
     rows += [("Real O'Neil groups: marginal fit failures", f'{n_fail} of {len(first_real)}'),
              ("Real O'Neil groups: further Bliss-reference failures", f'{min(failures)} to {max(failures)}'),
-             ('Runtime per matrix, BIGL ($B=100$) vs $T_{\\mathrm{SIR}}$ with region scan ($B=399+200$, one core)', f'{low_time:.1f} to {high_time:.0f} s vs {t1:.3f} to {t4:.3f} s')]
+             ('Runtime per matrix, BIGL ($B=100$) vs $T_{\\mathrm{SIR}}$ with region scan ($B=399+200$, one core)', f'median {low_time:.1f} to {high_time:.1f} s vs {t1:.3f} to {t4:.3f} s')]
     with open(os.path.join(mc.RESDIR, 'bigl_summary.json'), 'w') as f:
         json.dump(J, f, indent=1, default=float)
 

@@ -1,0 +1,31 @@
+n,spearman,lo,hi,comparison,subset,score
+315,0.9003908424613093,0.8729092291440996,0.9218427811511319,O'Neil batch 0 vs batch 1,all,activity
+315,0.4953152655079608,0.3986231872520934,0.5820290153049196,O'Neil batch 0 vs batch 1,all,mean Bliss excess
+315,0.6117443905121819,0.5315656872033522,0.684237400012405,O'Neil batch 0 vs batch 1,all,T_std statistic
+315,0.4337379646568206,0.3384459353487994,0.5249155967706048,O'Neil batch 0 vs batch 1,all,-log10 p(T_std)
+315,4.713814210901734,2.711466587407746,,O'Neil batch 0 vs batch 1,all,z-difference of mean excess: SD (robust SD)
+107,0.9522424028683947,0.917811545519382,0.9684047198677782,O'Neil batch 0 vs batch 1,edges identical across batches,activity
+107,0.7131409314445817,0.5890775414219169,0.8019221975334782,O'Neil batch 0 vs batch 1,edges identical across batches,mean Bliss excess
+107,0.7565772228718116,0.6415142100890391,0.8365533476214664,O'Neil batch 0 vs batch 1,edges identical across batches,T_std statistic
+107,0.6401964030975308,0.5115381129947433,0.7485698408439084,O'Neil batch 0 vs batch 1,edges identical across batches,-log10 p(T_std)
+107,3.1510728983371754,2.085089507997622,,O'Neil batch 0 vs batch 1,edges identical across batches,z-difference of mean excess: SD (robust SD)
+3062,0.5790470504584179,0.5495966071748619,0.6075662985004671,ALMANAC orientation pairs,all (identical copies dropped),activity
+3062,0.09000656118872465,0.051477750295438,0.12636432264855824,ALMANAC orientation pairs,all (identical copies dropped),mean Bliss excess
+3062,0.11485763393007008,0.07853214218852728,0.15012104102993576,ALMANAC orientation pairs,all (identical copies dropped),T_std statistic
+3062,0.10058871773124219,0.0645928612956501,0.13553773354629092,ALMANAC orientation pairs,all (identical copies dropped),-log10 p(T_std)
+3062,1.2423962503145538,1.1027329902847551,,ALMANAC orientation pairs,all (identical copies dropped),z-difference of mean excess: SD (robust SD)
+594,0.49774194107097575,0.43534985414012983,0.5574129983749577,O'Neil vs ALMANAC (cross-study),all matches,activity
+594,0.12387061626224406,0.04550900004982163,0.20237276053269607,O'Neil vs ALMANAC (cross-study),all matches,mean Bliss excess
+594,0.04650892600037896,-0.03494812031459398,0.12369527774977428,O'Neil vs ALMANAC (cross-study),all matches,T_std statistic
+594,0.07516181871113839,-0.0030682092724671566,0.1547633929760892,O'Neil vs ALMANAC (cross-study),all matches,-log10 p(T_std)
+594,2.8972161340379294,1.7665335279759158,,O'Neil vs ALMANAC (cross-study),all matches,z-difference of mean excess: SD (robust SD)
+240,0.924364138266289,0.8912823856869708,0.9441792715372567,O'Neil batch 0 vs batch 1,dose grids within 1%,activity
+240,0.5544818486432055,0.4435842471156732,0.6503420843662088,O'Neil batch 0 vs batch 1,dose grids within 1%,mean Bliss excess
+240,0.6688029587557132,0.5823335110513621,0.7418972764551948,O'Neil batch 0 vs batch 1,dose grids within 1%,T_std statistic
+240,0.5247683359399279,0.4246827808009096,0.6121894464219312,O'Neil batch 0 vs batch 1,dose grids within 1%,-log10 p(T_std)
+240,4.865583216074142,2.4928245782251124,,O'Neil batch 0 vs batch 1,dose grids within 1%,z-difference of mean excess: SD (robust SD)
+75,0.7920625889046942,0.6787399511952273,0.8650315343011863,O'Neil batch 0 vs batch 1,dose grids differ,activity
+75,0.3318634423897581,0.10451376737309136,0.5324774651774458,O'Neil batch 0 vs batch 1,dose grids differ,mean Bliss excess
+75,0.46806089533290435,0.2532820581169229,0.6447421413019757,O'Neil batch 0 vs batch 1,dose grids differ,T_std statistic
+75,0.17918337791012767,-0.06522227021860849,0.4162110033028123,O'Neil batch 0 vs batch 1,dose grids differ,-log10 p(T_std)
+75,4.216190779355391,3.9309972749188646,,O'Neil batch 0 vs batch 1,dose grids differ,z-difference of mean excess: SD (robust SD)

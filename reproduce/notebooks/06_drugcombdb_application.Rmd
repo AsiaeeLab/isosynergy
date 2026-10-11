@@ -1,0 +1,1017 @@
+---
+title: "What SIR finds on the O'Neil and NCI-ALMANAC screens in DrugCombDB"
+subtitle: "Reproducing main Figure 7, Supplementary Figures S3 and S6, and Tables S8 to S11 from the released per-unit table"
+author: "The SIR authors"
+date: "`r format(Sys.Date(), '%B %d, %Y')`"
+output:
+  html_document:
+    theme: flatly
+    toc: true
+    toc_float:
+      collapsed: false
+    toc_depth: 3
+    number_sections: true
+    code_folding: hide
+    fig_width: 9
+    fig_height: 5
+    df_print: kable
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE, comment = "#>")
+suppressPackageStartupMessages({
+  library(ggplot2); library(dplyr); library(tidyr); library(kableExtra)
+  library(jsonlite); library(reticulate); library(patchwork); library(scales)
+  library(SIR)
+})
+invisible(Sys.setlocale("LC_COLLATE", "C"))
+source("_common.R")
+REAL <- "realdata"
+RELEASE <- release_table_path()
+
+theme_set(theme_report)
+col_o <- "#0072B2"   # O'Neil
+col_a <- "#D55E00"   # ALMANAC
+
+options(knitr.kable.NA = "")
+kb <- function(x, digits = 4, ...) {
+  kbl(x, digits = digits, ...) %>%
+    kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE)
+}
+f3 <- function(x) sprintf("%.3f", x)
+f4 <- function(x) sprintf("%.4f", x)
+n0 <- function(x) format(x, big.mark = ",", scientific = FALSE)
+pct1 <- function(x) sprintf("%.1f%%", 100 * x)
+
+wilson <- function(k, n, z = 1.959964) {
+  p <- k / n
+  den <- 1 + z^2 / n
+  ctr <- (p + z^2 / (2 * n)) / den
+  hw <- z * sqrt(p * (1 - p) / n + z^2 / (4 * n^2)) / den
+  data.frame(rate = p, lo = ctr - hw, hi = ctr + hw)
+}
+
+pd <- import("pandas")
+read_parquet <- function(path) {
+  if (file.exists(path)) pd$read_parquet(path) else read_result(path)
+}
+
+# Running list of comparisons with the numbers printed in the paper
+CHECKS <- data.frame(item = character(), paper = numeric(), computed = numeric(),
+                     tol = numeric(), stringsAsFactors = FALSE)
+check <- function(item, paper, computed, tol) {
+  CHECKS[nrow(CHECKS) + 1, ] <<- list(item, paper, computed, tol)
+  invisible(computed)
+}
+
+```
+
+```{r load-release}
+# The released per-unit table (250,375 rows). Reading Parquet goes through pandas.
+U <- read_parquet(RELEASE)
+U$pair <- ifelse(U$drug_row < U$drug_col, paste(U$drug_row, "+", U$drug_col), paste(U$drug_col, "+", U$drug_row))
+U$bliss_expected_activity <- 1 - U$mean_bliss_prediction
+O <- U[U$study == "ONEIL", ]
+A <- U[U$study == "ALMANAC", ]
+
+# Two O'Neil batches of the same drug pair and cell line (315 groups)
+O$key <- paste(O$drug_row, O$drug_col, O$cell_line, sep = "|")
+b0 <- O[O$batch == 0, ]
+b1 <- O[O$batch == 1, ]
+cols_pair <- c("key", "activity", "mean_excess", "mean_excess_se", "t_std", "q_tstd", "doses_row_uM", "doses_col_uM")
+Pm <- merge(b0[, cols_pair], b1[, cols_pair], by = "key", suffixes = c("_0", "_1"))
+
+nul <- read_result(file.path(REAL, "null_summary.csv"))
+null_alm <- nul$rate[nul$study == "almanac" & nul$column == "p_tstd" & nul$level == 0.05]
+rc <- read_result(file.path(REAL, "repro_continuous.csv"))
+rcalls <- read_result(file.path(REAL, "repro_calls.csv"))
+cs <- read_result(file.path(REAL, "controls_summary.csv"))
+```
+
+# Summary
+
+```{r summary-numbers, include=FALSE}
+.bhO <- sum(O$q_tstd <= 0.05); .a05 <- sum(A$p_tstd <= 0.05)
+.rcv <- function(sub, sc) rc$spearman[rc$comparison == "O'Neil batch 0 vs batch 1" & rc$subset == sub & rc$score == sc]
+.cs1 <- cs[startsWith(cs$group, "ON-A + A2 + B pooled"), ]
+.cs2 <- cs[startsWith(cs$group, "AL-N2 "), ]
+```
+
+**On the O'Neil and NCI-ALMANAC screens, activity is the large and reproducible signal (Spearman `r f3(.rcv("all", "activity"))` between O'Neil batches), while synergy beyond Bliss is a small and much less reproducible part of it (`r f3(.rcv("all", "mean Bliss excess"))` for the mean excess). Single-matrix rejections in these screens do not constitute reproducible pair-level synergy claims, and the released scores are meant to prioritize replicated experiments.**
+
+```{r summary-table, echo=FALSE}
+kb(data.frame(
+  Quantity = c("Units analyzed (O'Neil + ALMANAC)", "O'Neil, BH within 54 families at q = 0.05",
+               "ALMANAC, plates with p <= 0.05 (null rate on real noise)",
+               "Cross-batch Spearman: activity / mean excess / SIR statistic (315 groups)",
+               "Cross-batch BH calls: both / expected by chance (kappa)",
+               "O'Neil same-line positive controls: mean percentile (Wilcoxon p)",
+               "ALMANAC inactive single agents: share with p <= 0.05 vs other plates"),
+  Value = c(n0(nrow(U)), sprintf("%s of %s (%s)", n0(.bhO), n0(nrow(O)), pct1(.bhO / nrow(O))),
+            sprintf("%s of %s (%s; %s)", n0(.a05), n0(nrow(A)), pct1(.a05 / nrow(A)), sprintf("%.2f%%", 100 * null_alm)),
+            paste(f3(.rcv("all", "activity")), f3(.rcv("all", "mean Bliss excess")), f3(.rcv("all", "T_std statistic")), sep = " / "),
+            sprintf("%d / %.1f (%.2f)", rcalls$n_both[1], rcalls$expected_both[1], rcalls$kappa[1]),
+            sprintf("%s (%s)", f3(.cs1$mean_pct_mean_excess), format(signif(.cs1$wilcoxon_p_pct_mean_excess, 2))),
+            sprintf("%s vs %s", pct1(.cs2$rate_tstd_p05), pct1(.cs2$bg_rate_tstd_p05)))),
+  row.names = FALSE)
+```
+
+All numbers in the table were computed from the released table and the stage outputs when this page was knit; the last section compares each with the value printed in the paper.
+
+# The question
+
+## Background
+
+DrugCombDB collects dose-response measurements from published combination screens. Two of its studies hold almost all of the dose matrices: the O'Neil screen (23,052 analysis units) and the NCI-ALMANAC screen (227,323 plates). Each matrix reports cell viability on a small dose grid, one drug along the rows, the other along the columns, with the zero-dose row and column holding the single-agent measurements. A combination is called synergistic when it kills more than a reference model of independent action predicts. We use Bliss independence on the viability scale: the expected viability of a combination is the product of the two single-agent viabilities, $\mathbb{E}\,Y_{ij} = \mathbb{E}\,Y_{i0}\,\mathbb{E}\,Y_{0j}$.
+
+The two studies were designed differently, and the difference decides which statement a test can make.
+
+- **O'Neil.** Each drug pair and cell line was measured in four replicate blocks. The combination wells are separate measurements in each block, but the single-agent wells are identical in all four: DrugCombDB reports one curve per drug and cell line, pooled across many blocks, so the single agents carry no replicate information. The analysis unit is the four-block group, tested as a stack of four replicate combination plates against the reported single-agent curves, which are held fixed. A rejection says that the combination wells lie below the Bliss surface of those reported curves.
+- **ALMANAC.** Each $4\times4$ plate carries its own single-agent wells, and every plate is analyzed alone. A rejection says that the plate lies below its own Bliss surface, with the single agents redrawn in the reference because they were measured on the plate.
+
+## The question
+
+> **Question.** On the O'Neil and NCI-ALMANAC screens, how much of the measured effect is synergy beyond Bliss independence, how reproducibly can it be measured, and what can be claimed pair by pair?
+
+## Why it is hard
+
+- A screen has hundreds of thousands of matrices, so a test needs a calibrated p-value for each one and a multiple-testing rule that respects dependence between matrices that share a single-agent curve.
+- In O'Neil, every matrix in a cell line uses the same reported single-agent curves, so an error in one curve produces rejections in all of its partners. These rejections test the reference as much as the combination.
+- In ALMANAC, one plate offers few wells, heavy-tailed noise and a plate-level shift, and the reference built from plate differences has limited resolution in its lower tail.
+- Reproducibility has to be measured on continuous scores, because binary calls depend on the family and the reference.
+
+# The method and the math
+
+## The statistic and its reference
+
+For a matrix with fitted nonincreasing single-agent curves $\hat a_i, \hat b_j$ and an isotonic surface fit $\hat\mu_{ij}$, the excess at cell $(i,j)$ is $\hat\eta_{ij} = \hat a_i \hat b_j - \hat\mu_{ij}$, positive where the combination kills more than Bliss predicts. The SIR statistic is the standardized positive-part excess,
+
+$$
+T_{\mathrm{SIR}} = \sum_{i,j\ge 1} \left( \frac{\hat a_i\hat b_j - \hat\mu_{ij}}{s(\hat a_i\hat b_j)} \right)_+^{2},
+$$
+
+with $s$ the noise SD at the Bliss prediction. (The package field is `t_std`, and the released table uses the same column name.) The p-value is a plug-in parametric bootstrap at exact Bliss, $p = \{1 + \#(T^*_b \ge T_{\mathrm{SIR}})\}/(B+1)$, with $B = 399$ reference plates and a fresh second stage of $9{,}999$ plates when the first-stage p-value is at most 0.05. The smallest p-value a unit can receive is therefore $1/10{,}000 = 0.0001$.
+
+The two designs differ in what the reference redraws. In O'Neil (design P) the reported single-agent curves are treated as exact and the reference reproduces the replicate noise and block shifts of the combination plates, drawn from a bank of 22,422 real four-block residual sets. In ALMANAC (design S) the single-agent wells are redrawn and refit on every reference plate, and the noise comes from a bank of real plate-to-plate differences (the orientation pairs, below).
+
+## Activity, mean excess and their decomposition
+
+Two continuous summaries are computed on the raw wells. Activity is the mean kill over the combination cells, and the mean Bliss excess is the mean of observed minus predicted kill:
+
+$$
+\mathrm{Act} = \frac1r\sum_{i,j\ge1}(1-Y_{ij}), \qquad
+\hat B = \frac1r\sum_{i,j\ge1}(Y_{i0}Y_{0j} - Y_{ij}), \qquad r = \text{number of combination cells}.
+$$
+
+They are linked by an exact identity,
+
+$$
+\mathrm{Act} = \underbrace{\frac1r\sum_{i,j\ge1}(1 - Y_{i0}Y_{0j})}_{\text{Bliss-expected activity}} + \hat B ,
+$$
+
+so activity splits into the part that the single agents already explain and the part attributed to the combination. For a replicate stack the identity holds for the cell average of the replicate means; the released `mean_excess` is the block-level estimate of the companion test, which equals that cell average unless the replicate screen removed values (`n_screened` greater than 0). We verify the identity on the released table below.
+
+## Multiple testing: Benjamini-Hochberg within declared families
+
+Screens are analyzed in families declared in advance, the cell line within a study and batch (54 O'Neil families and 60 ALMANAC families). Within a family of $N$ tests with p-values $p_{(1)}\le\dots\le p_{(N)}$, the BH rule at level $q$ calls the $R$ smallest, where $R=\max\{k : p_{(k)} \le kq/N\}$. A Monte Carlo p-value cannot be smaller than $1/(B+1)$, so $R$ discoveries among $N$ tests require $B \ge N/(qR) - 1$; this is why matrices with a first-stage p-value of at most 0.05 are retested with 9,999 plates.
+
+For ALMANAC the lower tail of the plate-difference reference is coarse: a plate-type stratum offers a median of 151 donor pairs, about 300 distinct reference noise matrices, so a plate that exceeds all of them receives the smallest possible p-value whatever $B$ is. BH rests on exactly these smallest p-values, so ALMANAC is summarized at level 0.05 and not by BH lists.
+
+## Reproducibility, controls and the clinical window
+
+- **Reproducibility.** For drug pairs and cell lines measured twice, we compare each score across the two measurements with the Spearman correlation (percentile bootstrap over groups) and, for calls, with the expected number of joint calls $N_1N_2/N$ and Cohen's $\kappa = (p_o - p_e)/(1-p_e)$.
+- **Positive and negative controls.** For a set of drug pair and cell line clusters, the within-cell-line percentile of $\hat B$ is $(\mathrm{rank}-0.5)/n$; its cluster mean is compared with 0.5 by a one-sided Wilcoxon test.
+- **Clinical concentration window.** The test is repeated on the doses at most three times the clinical maximal plasma concentration $C_{\max}$ of each drug.
+
+# The data
+
+The inputs are the released per-unit table and the stage-02 outputs it was built from.
+
+```{r load-display, eval=FALSE}
+# Same code as the 'load-release' chunk above; release_table_path() uses dataset_release/ or downloads the table
+U <- pd$read_parquet(release_table_path())
+dim(U)
+```
+
+```{r data-dims}
+dims <- data.frame(
+  quantity = c("Rows", "Columns", "O'Neil units", "ALMANAC plates", "O'Neil families", "ALMANAC families",
+               "O'Neil cell lines", "ALMANAC cell lines", "O'Neil drug pairs", "ALMANAC drug pairs"),
+  value = c(nrow(U), ncol(U), nrow(O), nrow(A), length(unique(O$family)), length(unique(A$family)),
+            length(unique(O$cell_line)), length(unique(A$cell_line)), length(unique(O$pair)), length(unique(A$pair))))
+kb(dims, row.names = FALSE, format.args = list(big.mark = ","))
+```
+
+```{r data-columns}
+cat(paste(names(U), collapse = ", "))
+```
+
+The columns used in this notebook are `activity`, `mean_bliss_prediction`, `mean_excess` and `mean_excess_se` (the continuous scores), `t_std` (the SIR statistic), `p_tstd` and `q_tstd` (its p-value and its BH q-value within `family`), `p_companion` and `q_companion` (the companion mean test), `p_scan` (the region scan), `n_screened` (replicate values removed by the screen), `edge_row_top` and `edge_col_top` (single-agent viability at the top dose), and the fragility columns.
+
+```{r data-complete}
+key_cols <- c("activity", "mean_bliss_prediction", "mean_excess", "mean_excess_se", "t_std", "p_tstd", "q_tstd",
+              "p_companion", "q_companion", "p_scan", "fragility_cell_p", "fragility_sa_p")
+miss <- sapply(split(U[, key_cols], U$study), function(d) colSums(is.na(d)))
+cat("Missing values per column and study (fragility columns are filled only for significant single plates):\n")
+kb(miss, digits = 0, format.args = list(big.mark = ","))
+cat("\nUnits with a screened replicate value (O'Neil):", n0(sum(O$n_screened > 0)),
+    "; units with a dropped dose or a missing well:", sum(U$n_dropped_doses > 0 | U$n_missing_cells > 0), "\n")
+cat("Duplicated unit ids:", sum(duplicated(U$unit_id)), "\n")
+```
+
+```{r data-tested-null}
+tn <- unique(U[, c("study", "design", "null_tested")])
+kb(tn, row.names = FALSE)
+```
+
+Checks against the counts in the paper and the data release:
+
+```{r data-expected}
+sanity <- data.frame(
+  item = c("Rows", "Columns", "O'Neil units", "ALMANAC plates", "O'Neil families", "ALMANAC families", "O'Neil cell lines",
+           "ALMANAC cell lines", "O'Neil drugs", "ALMANAC drugs", "O'Neil drug pairs", "ALMANAC drug pairs",
+           "O'Neil units with p <= 0.05", "ALMANAC plates with p <= 0.05", "O'Neil units with p at the minimum"),
+  paper = c(250375, 61, 23052, 227323, 54, 60, 39, 60, 38, 101, 583, 4080, 12864, 13928, 3439),
+  computed = c(nrow(U), ncol(U) - 2, nrow(O), nrow(A), length(unique(O$family)), length(unique(A$family)),
+               length(unique(O$cell_line)), length(unique(A$cell_line)),
+               length(unique(c(O$drug_row, O$drug_col))), length(unique(c(A$drug_row, A$drug_col))),
+               length(unique(O$pair)), length(unique(A$pair)), sum(O$p_tstd <= 0.05), sum(A$p_tstd <= 0.05),
+               sum(O$p_tstd == 1 / (O$mc_B + 1))))
+sanity$match <- sanity$paper == sanity$computed
+kb(sanity, row.names = FALSE, format.args = list(big.mark = ","))
+for (i in seq_len(nrow(sanity))) check(sanity$item[i], sanity$paper[i], sanity$computed[i], 0.5)
+```
+
+The table has `r n0(nrow(U))` rows, `r n0(nrow(O))` O'Neil units in `r length(unique(O$family))` families and `r n0(nrow(A))` ALMANAC plates in `r length(unique(A$family))` families, and every count above equals the value in the paper. The scores (`activity`, `mean_excess`, `t_std`, `p_tstd`) are complete in both studies; the only columns with missing values are the fragility columns, which are filled for significant single plates, and the batch column, which is empty for ALMANAC. No unit had a dropped dose or a missing combination well. In O'Neil, `r n0(sum(O$n_screened > 0))` units had at least one replicate value removed by the screen. The two studies carry different tested nulls (the table lists them in the column `null_tested`): relative to the reported single-agent curves for O'Neil, and relative to the plate's own Bliss surface for ALMANAC.
+
+## Decision point
+
+**Decision point.** The data are complete and agree with the reference counts. Before reading any score, we verify the identity that splits activity into a Bliss-expected part and the mean excess, then look at the distributions (Panels A and B).
+
+# Figure 7 in outline
+
+Figure 7 is the overview of the application. Panels A and B show the distributions of the two continuous scores; C to E compare the two O'Neil batches of the same groups; F shows how the testing families behave. Each panel is drawn below from the released table, and the assembled figure closes the section on panel F.
+
+# Panels A and B: activity and mean excess
+
+## Rationale
+
+Activity is the stable, large signal, and the mean excess is what is left after the single agents are accounted for. Before looking at either, we verify the identity that links them, since every later statement about "activity explained by the single agents" rests on it.
+
+## The decomposition on the released table
+
+```{r decomposition}
+U$decomp_resid <- U$activity - (U$bliss_expected_activity + U$mean_excess)
+dec <- U %>% mutate(group = ifelse(n_screened > 0, "units with screened replicate values", "no screened values")) %>%
+  group_by(study, group) %>%
+  summarise(units = n(), max_abs_residual = max(abs(decomp_resid)), median_abs_residual = median(abs(decomp_resid)), .groups = "drop")
+kb(dec, digits = 3, format.args = list(big.mark = ","))
+```
+
+In every ALMANAC plate and in every O'Neil unit without a screened replicate value the identity holds to machine precision (largest residual `r format(max(dec$max_abs_residual[dec$group == "no screened values"]), digits = 2)`). In O'Neil units with screened values, activity uses the screened cell-wise means while `mean_excess` is the block-level estimate, so the two sides differ by up to `r f3(max(dec$max_abs_residual))`.
+
+## Distribution of the scores
+
+```{r panelAB}
+sc <- bind_rows(
+  data.frame(study = "O'Neil", activity = O$activity, mean_excess = O$mean_excess, expected = O$bliss_expected_activity),
+  data.frame(study = "ALMANAC", activity = A$activity, mean_excess = A$mean_excess, expected = A$bliss_expected_activity))
+sumtab <- sc %>% group_by(study) %>%
+  summarise(units = n(), median_activity = median(activity), median_bliss_expected = median(expected),
+            median_mean_excess = median(mean_excess), share_excess_positive = mean(mean_excess > 0), .groups = "drop")
+kb(sumtab, digits = 4, format.args = list(big.mark = ","))
+ej <- read_result(file.path(REAL, "extra_numbers.json"))
+cat("Median activity and mean excess in extra_numbers.json: O'Neil", f4(ej$oneil_median_activity), f4(ej$oneil_median_mean_excess),
+    "; ALMANAC", f4(ej$almanac_median_activity), f4(ej$almanac_median_mean_excess), "\n")
+```
+
+```{r panelAB-plot, fig.height=3.6}
+clip <- function(x, lo, hi) pmin(pmax(x, lo), hi)
+pa <- ggplot(sc, aes(clip(activity, -0.3, 1.05), color = study)) + geom_density(linewidth = 0.8, bw = 0.02) +
+  scale_color_manual(values = c("O'Neil" = col_o, "ALMANAC" = col_a)) +
+  labs(x = "Activity, mean of 1 - Y", y = "Density", color = NULL)
+pb <- ggplot(sc, aes(clip(mean_excess, -0.3, 0.3), color = study)) + geom_density(linewidth = 0.8, bw = 0.005) +
+  geom_vline(xintercept = 0, linetype = 2, color = "gray50") +
+  scale_color_manual(values = c("O'Neil" = col_o, "ALMANAC" = col_a)) +
+  labs(x = "Mean Bliss excess", y = "Density", color = NULL)
+pa + pb + plot_layout(guides = "collect") & theme(legend.position = "bottom")
+```
+
+## What do we see?
+
+The identity holds to machine precision in every ALMANAC plate and in `r n0(dec$units[dec$study == "ONEIL" & dec$group == "no screened values"])` of the `r n0(nrow(O))` O'Neil units; the `r n0(dec$units[dec$group != "no screened values"])` O'Neil units with a screened value differ by at most `r f3(max(dec$max_abs_residual))`, as the released documentation states.
+
+Activity is much larger in O'Neil than in ALMANAC: the median activity is `r f3(sumtab$median_activity[sumtab$study == "O'Neil"])` against `r f3(sumtab$median_activity[sumtab$study == "ALMANAC"])`. Almost all of it is explained by the single agents. The median Bliss-expected activity is `r f3(sumtab$median_bliss_expected[sumtab$study == "O'Neil"])` in O'Neil and `r f3(sumtab$median_bliss_expected[sumtab$study == "ALMANAC"])` in ALMANAC, and the median mean excess is only `r f3(sumtab$median_mean_excess[sumtab$study == "O'Neil"])` and `r f4(sumtab$median_mean_excess[sumtab$study == "ALMANAC"])`. The mean excess is positive in `r pct1(sumtab$share_excess_positive[sumtab$study == "O'Neil"])` of O'Neil units and `r pct1(sumtab$share_excess_positive[sumtab$study == "ALMANAC"])` of ALMANAC plates, centered near zero for ALMANAC and shifted to the right for O'Neil, where the single agents are the reported curves (Panel B).
+
+## Decision point
+
+**Decision point.** Activity is large and mostly explained by the single agents. The remaining component, the mean excess, is the quantity of interest, so the next question is how reproducibly it can be measured.
+
+# Panels C to E: reproducibility across O'Neil batches
+
+## Rationale
+
+315 of the 22,737 O'Neil drug pair and cell line groups were measured in a second batch and are analyzed once per batch. For these groups we can ask how well each score reproduces. We use continuous scores, because binary calls depend on the testing family and on the reference.
+
+## Rebuilding the correlations from the released table
+
+```{r repro-corr}
+set.seed(2026)
+boot_ci <- function(x, y, B = 2000) {
+  n <- length(x)
+  r <- replicate(B, { i <- sample.int(n, n, replace = TRUE); cor(x[i], y[i], method = "spearman") })
+  quantile(r, c(0.025, 0.975))
+}
+scores <- c(activity = "activity", mean_excess = "mean_excess", t_std = "t_std")
+R1 <- bind_rows(lapply(names(scores), function(v) {
+  x <- Pm[[paste0(v, "_0")]]; y <- Pm[[paste0(v, "_1")]]
+  ci <- boot_ci(x, y)
+  data.frame(score = v, groups = nrow(Pm), spearman = cor(x, y, method = "spearman"), lo = ci[[1]], hi = ci[[2]])
+}))
+fileR1 <- rc[rc$comparison == "O'Neil batch 0 vs batch 1" & rc$subset == "all" &
+               rc$score %in% c("activity", "mean Bliss excess", "T_std statistic"), ]
+R1$file_spearman <- fileR1$spearman
+R1$file_lo <- fileR1$lo
+R1$file_hi <- fileR1$hi
+kb(R1, digits = 3, row.names = FALSE)
+check("Batch 1 vs 2 Spearman, activity (315 groups)", 0.900, R1$spearman[1], 5e-4)
+check("Batch 1 vs 2 Spearman, mean excess", 0.495, R1$spearman[2], 5e-4)
+check("Batch 1 vs 2 Spearman, SIR statistic", 0.612, R1$spearman[3], 5e-4)
+check("Interval, activity, lower (file)", 0.873, R1$file_lo[1], 5e-4)
+check("Interval, activity, upper (file)", 0.922, R1$file_hi[1], 5e-4)
+check("Interval, mean excess, lower (file)", 0.399, R1$file_lo[2], 5e-4)
+check("Interval, mean excess, upper (file)", 0.582, R1$file_hi[2], 5e-4)
+check("Interval, SIR statistic, lower (file)", 0.532, R1$file_lo[3], 5e-4)
+check("Interval, SIR statistic, upper (file)", 0.684, R1$file_hi[3], 5e-4)
+```
+
+The point estimates are recomputed from the released table. The intervals are percentile bootstrap intervals over groups; the columns `file_lo` and `file_hi` are the intervals stored by the pipeline (2,000 resamples with its own seed), and our resampling gives the same intervals to about 0.01.
+
+```{r panelCDE-plot, fig.height=3.6}
+mk <- function(v, lab, lim) {
+  d <- data.frame(x = Pm[[paste0(v, "_0")]], y = Pm[[paste0(v, "_1")]])
+  ggplot(d, aes(x, y)) + geom_abline(slope = 1, intercept = 0, linetype = 2, color = "gray50") +
+    geom_point(color = col_o, alpha = 0.6, size = 1) + coord_cartesian(xlim = lim, ylim = lim) +
+    labs(x = paste(lab, "batch 1"), y = paste(lab, "batch 2"))
+}
+Pm$lt0 <- log10(1 + Pm$t_std_0); Pm$lt1 <- log10(1 + Pm$t_std_1)
+pt <- ggplot(Pm, aes(lt0, lt1)) + geom_abline(slope = 1, intercept = 0, linetype = 2, color = "gray50") +
+  geom_point(color = col_o, alpha = 0.6, size = 1) +
+  labs(x = expression(log[10](1+T[SIR])*", batch 1"), y = expression(log[10](1+T[SIR])*", batch 2"))
+pc <- mk("activity", "Activity,", c(-0.2, 1)); pd_ <- mk("mean_excess", "Mean excess,", c(-0.25, 0.45))
+pc + pd_ + pt
+```
+
+## Dose-matched groups and cross-batch offsets
+
+The two batches did not always use the same dose grid. We split the 315 groups by whether the nonzero doses of both drugs agree within 1% across batches.
+
+```{r dose-split}
+pdz <- function(s) lapply(strsplit(s, ";"), as.numeric)
+d0r <- pdz(Pm$doses_row_uM_0); d1r <- pdz(Pm$doses_row_uM_1); d0c <- pdz(Pm$doses_col_uM_0); d1c <- pdz(Pm$doses_col_uM_1)
+rel <- mapply(function(a, b, c, d) {
+  if (length(a) != length(b) || length(c) != length(d)) return(Inf)
+  max(abs(a[-1] / b[-1] - 1), abs(c[-1] / d[-1] - 1))
+}, d0r, d1r, d0c, d1c)
+Pm$matched <- rel <= 0.01
+rs <- function(d) sapply(scores, function(v) cor(d[[paste0(v, "_0")]], d[[paste0(v, "_1")]], method = "spearman"))
+split_tab <- rbind(
+  data.frame(subset = "All groups", groups = nrow(Pm), t(rs(Pm))),
+  data.frame(subset = "Dose grids within 1%", groups = sum(Pm$matched), t(rs(Pm[Pm$matched, ]))),
+  data.frame(subset = "Dose grids differ", groups = sum(!Pm$matched), t(rs(Pm[!Pm$matched, ]))))
+kb(split_tab, digits = 3, row.names = FALSE)
+dw <- read_result(file.path(REAL, "repro_dose_window.json"))
+check("Dose-matched groups", 240, sum(Pm$matched), 0.5)
+check("Dose-matched Spearman, activity", 0.924, split_tab$activity[2], 5e-4)
+check("Dose-matched Spearman, mean excess", 0.554, split_tab$mean_excess[2], 5e-4)
+check("Dose-matched Spearman, SIR statistic", 0.669, split_tab$t_std[2], 5e-4)
+check("Groups measured in two batches", 315, nrow(Pm), 0.5)
+```
+
+The paper also quantifies a batch offset in the mean excess. The standardized batch difference $z = (\hat B_1 - \hat B_2)/\sqrt{\mathrm{SE}_1^2+\mathrm{SE}_2^2}$ would have SD 1 if the within-matrix standard errors captured all variation between batches.
+
+```{r batch-offset}
+z <- (Pm$mean_excess_0 - Pm$mean_excess_1) / sqrt(Pm$mean_excess_se_0^2 + Pm$mean_excess_se_1^2)
+off <- data.frame(
+  quantity = c("Mean excess, batch 1", "Mean excess, batch 2", "SD of z", "Robust SD of z (MAD)"),
+  value = c(mean(Pm$mean_excess_0), mean(Pm$mean_excess_1), sd(z), mad(z)))
+kb(off, row.names = FALSE)
+zr <- rc[rc$comparison == "O'Neil batch 0 vs batch 1" & rc$subset == "all" & startsWith(rc$score, "z-difference"), ]
+cat("repro_continuous.csv: SD", f3(zr$spearman), "robust", f3(zr$lo), "\n")
+check("Batch mean excess, first batch", 0.094, off$value[1], 5e-4)
+check("Batch mean excess, second batch", 0.022, off$value[2], 5e-4)
+check("SD of the standardized batch difference", 4.7, zr$spearman, 0.05)
+check("Robust SD of the standardized batch difference", 2.7, zr$lo, 0.05)
+```
+
+## ALMANAC orientation pairs and the cross-study comparison
+
+3,062 ALMANAC drug pairs were measured twice in opposite drug order on separate plates. These pairs are also the source of the plate-difference noise bank for ALMANAC. The pairing is built by the pipeline from the DrugCombDB block ids, and we read its output.
+
+```{r orientation}
+op <- read_result("realdata/repro_pairs_almanac.parquet")
+orient <- data.frame(
+  score = c("activity", "mean_excess", "t_std"),
+  pairs = nrow(op),
+  spearman = c(cor(op$activity_1, op$activity_2, method = "spearman"),
+               cor(op$mean_excess_1, op$mean_excess_2, method = "spearman"),
+               cor(op$t_std_1, op$t_std_2, method = "spearman")))
+kb(orient, digits = 3, row.names = FALSE)
+orf <- rc[rc$comparison == "ALMANAC orientation pairs" & rc$score %in% c("activity", "mean Bliss excess", "T_std statistic"), ]
+check("ALMANAC orientation pairs", 3062, nrow(op), 0.5)
+check("ALMANAC orientation Spearman, activity", 0.579, orient$spearman[1], 5e-4)
+check("ALMANAC orientation Spearman, mean excess", 0.090, orient$spearman[2], 5e-4)
+check("ALMANAC orientation Spearman, SIR statistic", 0.115, orient$spearman[3], 5e-4)
+check("ALMANAC orientation interval, activity, lower", 0.550, orf$lo[1], 5e-4)
+check("ALMANAC orientation interval, activity, upper", 0.608, orf$hi[1], 5e-4)
+```
+
+## Table S10: continuous scores and calls
+
+```{r tabS10}
+cmp <- c("O'Neil batch 0 vs batch 1|all", "O'Neil batch 0 vs batch 1|edges identical across batches",
+         "O'Neil batch 0 vs batch 1|dose grids within 1%", "ALMANAC orientation pairs|all (identical copies dropped)",
+         "O'Neil vs ALMANAC (cross-study)|all matches")
+lab <- c("O'Neil, batch 1 vs batch 2", "Identical curves", "Dose-matched groups", "ALMANAC orientation pairs", "O'Neil vs ALMANAC")
+s10 <- bind_rows(lapply(seq_along(cmp), function(i) {
+  parts <- strsplit(cmp[i], "\\|")[[1]]
+  g <- rc[rc$comparison == parts[1] & rc$subset == parts[2], ]
+  cellv <- function(sc) { r <- g[g$score == sc, ]; sprintf("%.3f [%.3f, %.3f]", r$spearman, r$lo, r$hi) }
+  data.frame(Comparison = lab[i], Groups = n0(g$n[1]), Activity = cellv("activity"),
+             `Mean excess` = cellv("mean Bliss excess"), `SIR statistic` = cellv("T_std statistic"), check.names = FALSE)
+}))
+kb(s10, row.names = FALSE)
+```
+
+## Cross-batch agreement of binary calls
+
+Calls are summarized separately because they depend on the family. For the 315 groups, the BH call of $T_{\mathrm{SIR}}$ at $q = 0.05$ within the cell-line family:
+
+```{r calls}
+a <- Pm$q_tstd_0 <= 0.05; b <- Pm$q_tstd_1 <= 0.05
+N <- nrow(Pm); both <- sum(a & b)
+exp_both <- sum(a) * sum(b) / N
+po <- (both + sum(!a & !b)) / N; pe <- (sum(a) * sum(b) + sum(!a) * sum(!b)) / N^2
+kappa <- (po - pe) / (1 - pe)
+calls <- data.frame(groups = N, first_batch = sum(a), second_batch = sum(b), both = both,
+                    expected_both = exp_both, kappa = kappa)
+kb(calls, digits = 3, row.names = FALSE)
+check("Cross-batch calls, first batch", 270, sum(a), 0.5)
+check("Cross-batch calls, second batch", 188, sum(b), 0.5)
+check("Cross-batch calls, both", 179, both, 0.5)
+check("Cross-batch calls, expected by chance", 161.1, exp_both, 0.05)
+check("Cross-batch kappa", 0.26, kappa, 0.005)
+s10c <- rcalls[rcalls$comparison == "O'Neil batch 0 vs batch 1" & rcalls$subset == "all", c("call", "N", "n_first", "n_second", "n_both", "expected_both", "kappa")]
+kb(s10c, digits = 3, row.names = FALSE)
+```
+
+## What do we see?
+
+Across the `r nrow(Pm)` O'Neil groups measured in two batches, the Spearman correlation is `r f3(R1$spearman[1])` for activity, `r f3(R1$spearman[2])` for the mean excess and `r f3(R1$spearman[3])` for the SIR statistic. Activity falls on the identity line in Panel C, while the mean excess (Panel D) and the statistic (Panel E) scatter widely. On the `r sum(Pm$matched)` groups whose dose grids agree within 1% the correlations rise to `r f3(split_tab$activity[2])`, `r f3(split_tab$mean_excess[2])` and `r f3(split_tab$t_std[2])`, and on the `r sum(!Pm$matched)` groups with different grids they are `r f3(split_tab$activity[3])`, `r f3(split_tab$mean_excess[3])` and `r f3(split_tab$t_std[3])`, so part of the loss comes from dose-window changes between batches. The first batch has a higher mean excess than the second on the same groups (`r f3(off$value[1])` against `r f3(off$value[2])`), and the standardized batch difference has SD `r sprintf("%.1f", off$value[3])` (robust SD `r sprintf("%.1f", off$value[4])`) instead of 1, so between-experiment variation dominates the within-matrix standard error.
+
+ALMANAC pairs measured twice in opposite drug order reproduce activity at `r f3(orient$spearman[1])` but the mean excess and the statistic at only `r f3(orient$spearman[2])` and `r f3(orient$spearman[3])`; the O'Neil and ALMANAC measurements of the same pairs (594 matches) agree on activity at `r f3(rc$spearman[rc$comparison == "O'Neil vs ALMANAC (cross-study)" & rc$score == "activity"])` and on the mean excess at `r f3(rc$spearman[rc$comparison == "O'Neil vs ALMANAC (cross-study)" & rc$score == "mean Bliss excess"])`. For calls, `r sum(a)` of the `r N` groups were called in the first batch, `r sum(b)` in the second and `r both` in both, against `r round(exp_both, 1)` expected from these rates (kappa `r sprintf("%.2f", kappa)`): agreement above chance, and weak.
+
+## Decision point
+
+**Decision point.** Activity reproduces, synergy reproduces poorly, and binary calls agree only slightly more often than chance. We now look at what the tests reject within testing families, and at why the two studies are summarized differently.
+
+# Panel F: tests within testing families
+
+## O'Neil: BH within the declared families
+
+```{r panelF-oneil}
+O$bh_family <- ave(O$p_tstd, O$family, FUN = function(p) p.adjust(p, "BH"))
+bh_pool <- p.adjust(O$p_tstd, "BH")
+bhj <- read_result(file.path(REAL, "bh_pooled_vs_families.json"))
+fc <- read_result(file.path(REAL, "family_counts.json"))
+bh_tab <- data.frame(
+  quantity = c("BH within the 54 declared families, q <= 0.05", "Share of the 23,052 units", "Cell lines with a call",
+               "Drug pairs with a call", "Companion block-level t, BH within families",
+               "Both T_SIR and companion", "Same p-values, BH pooled over all O'Neil units",
+               "Called in both rules", "Families only", "Pooled only",
+               "Largest difference between released q and q recomputed in R"),
+  value = c(sum(O$bh_family <= 0.05), mean(O$bh_family <= 0.05), length(unique(O$cell_line[O$bh_family <= 0.05])),
+            length(unique(O$pair[O$bh_family <= 0.05])), sum(O$q_companion <= 0.05),
+            sum(O$q_tstd <= 0.05 & O$q_companion <= 0.05), sum(bh_pool <= 0.05),
+            sum(O$bh_family <= 0.05 & bh_pool <= 0.05), sum(O$bh_family <= 0.05 & bh_pool > 0.05),
+            sum(O$bh_family > 0.05 & bh_pool <= 0.05), max(abs(O$bh_family - O$q_tstd))))
+kb(bh_tab, digits = 4, row.names = FALSE, format.args = list(big.mark = ","))
+check("O'Neil BH calls within families", 11482, sum(O$bh_family <= 0.05), 0.5)
+check("O'Neil BH share", 0.498, mean(O$bh_family <= 0.05), 5e-4)
+check("O'Neil BH calls, pooled over the study", 11637, sum(bh_pool <= 0.05), 0.5)
+check("Companion block-level t, BH calls", 6158, sum(O$q_companion <= 0.05), 0.5)
+check("Both T_SIR and companion BH", 5811, sum(O$q_tstd <= 0.05 & O$q_companion <= 0.05), 0.5)
+check("Cell lines with a BH call", 39, length(unique(O$cell_line[O$bh_family <= 0.05])), 0.5)
+check("Drug pairs with a BH call", 583, length(unique(O$pair[O$bh_family <= 0.05])), 0.5)
+check("Pooled and within-family BH, called in both (json)", 11244, bhj$both, 0.5)
+```
+
+These are rejections of the reference. They cluster on drugs as an error in one reported curve would:
+
+```{r drug-clusters}
+big <- fc$ONEIL$largest_drug_cluster
+cl_tab <- data.frame(
+  quantity = c("Family-drug pairings with at least 3 rejections", "Family-drug pairings with at least 5 rejections",
+               "Largest cluster: family", "Largest cluster: drug", "Rejections among partners",
+               "Partners tested", "Expected if rejections were spread at the family rate"),
+  value = c(fc$ONEIL$drug_clusters_ge3_calls, fc$ONEIL$drug_clusters_ge5_calls, big$family, big$drug, big$n_calls, big$n_tested,
+            round(big$expected_if_random, 1)))
+kb(cl_tab, row.names = FALSE)
+check("Family-drug pairings with at least 3 rejections", 1388, fc$ONEIL$drug_clusters_ge3_calls, 0.5)
+check("BEZ-235 in T-47D: rejections", 37, big$n_calls, 0.5)
+check("BEZ-235 in T-47D: expected", 24.2, big$expected_if_random, 0.05)
+```
+
+## ALMANAC: level 0.05 and not BH lists
+
+```{r panelF-almanac}
+n_alm <- nrow(A)
+a05 <- sum(A$p_tstd <= 0.05)
+bhA <- ave(A$p_tstd, A$family, FUN = function(p) p.adjust(p, "BH"))
+at_floor <- A$p_tstd == 1 / (A$mc_B + 1)
+frag <- A[A$p_tstd <= 0.05, ]
+nb <- read_result(file.path(REAL, "null_bank_resolution.json"))$almanac
+al_tab <- data.frame(
+  quantity = c("Plates with p <= 0.05", "Share of plates", "Real-noise null rate of T_SIR at 0.05",
+               "Plates expected at the null rate", "Raw BH calls within cell line, q <= 0.05",
+               "Of these, at the minimum p-value 1/(B+1)", "BH calls after flooring p-values at the bank resolution",
+               "Donor pairs per potency stratum (median)", "Distinct reference noise matrices (median)",
+               "Calls failing the cell fragility check", "Calls failing the single-agent row check"),
+  value = c(a05, a05 / n_alm, null_alm, n_alm * null_alm, sum(bhA <= 0.05), sum(bhA <= 0.05 & at_floor),
+            sum(A$q_tstd_floored <= 0.05, na.rm = TRUE), nb$bank_pool_sets_median, nb$distinct_reference_noise_matrices_median,
+            mean(frag$fragility_cell_p > 0.05), mean(frag$fragility_sa_p > 0.05)))
+kb(al_tab, digits = 4, row.names = FALSE, format.args = list(big.mark = ","))
+check("ALMANAC plates with p <= 0.05", 13928, a05, 0.5)
+check("ALMANAC share with p <= 0.05", 0.061, a05 / n_alm, 5e-4)
+check("ALMANAC real-noise null rate at 0.05", 0.0395, null_alm, 5e-5)
+check("ALMANAC raw BH calls", 3841, sum(bhA <= 0.05), 0.5)
+check("ALMANAC BH calls at the p floor", 3840, sum(bhA <= 0.05 & at_floor), 0.5)
+check("ALMANAC BH calls after flooring", 0, sum(A$q_tstd_floored <= 0.05, na.rm = TRUE), 0.5)
+check("ALMANAC median donor pairs per stratum", 151, nb$bank_pool_sets_median, 0.5)
+check("ALMANAC distinct reference noise matrices", 302, nb$distinct_reference_noise_matrices_median, 0.5)
+check("ALMANAC calls failing the cell fragility check", 0.547, mean(frag$fragility_cell_p > 0.05), 5e-4)
+check("ALMANAC calls failing the single-agent row check", 0.866, mean(frag$fragility_sa_p > 0.05), 5e-4)
+check("Region scan claims, O'Neil", 12943, sum(O$p_scan <= 0.05), 0.5)
+check("Region scan claims, ALMANAC", 13706, sum(A$p_scan <= 0.05), 0.5)
+check("Region scan share, ALMANAC", 0.060, sum(A$p_scan <= 0.05) / n_alm, 5e-4)
+```
+
+## Per-family shares (the points of panel F)
+
+```{r panelF-shares}
+fo <- O %>% group_by(family) %>%
+  summarise(units = n(), `T_SIR (BH)` = mean(q_tstd <= 0.05), `Block-level t (BH)` = mean(q_companion <= 0.05), .groups = "drop")
+fa <- A %>% group_by(family) %>% summarise(units = n(), share = mean(p_tstd <= 0.05), .groups = "drop")
+fam <- data.frame(
+  quantity = c("O'Neil families", "O'Neil median share, T_SIR with BH", "O'Neil median share, block-level t with BH",
+               "ALMANAC families", "ALMANAC median share with p <= 0.05", "ALMANAC minimum", "ALMANAC maximum",
+               "ALMANAC families above the null rate"),
+  value = c(nrow(fo), median(fo$`T_SIR (BH)`), median(fo$`Block-level t (BH)`), nrow(fa), median(fa$share),
+            min(fa$share), max(fa$share), sum(fa$share > null_alm)))
+kb(fam, digits = 4, row.names = FALSE)
+```
+
+```{r panelF-plot, fig.height=3.8}
+set.seed(3)
+po <- bind_rows(
+  data.frame(test = "T_SIR, BH", share = fo$`T_SIR (BH)`),
+  data.frame(test = "Block-level t, BH", share = fo$`Block-level t (BH)`))
+p1 <- ggplot(po, aes(test, share)) + geom_jitter(width = 0.15, height = 0, color = col_o, alpha = 0.75) +
+  stat_summary(fun = median, geom = "crossbar", width = 0.5, linewidth = 0.3) +
+  scale_x_discrete(labels = c("Block-level t, BH" = "Block t", "T_SIR, BH" = "T_SIR")) +
+  labs(x = "O'Neil", y = "Share with BH q <= 0.05")
+p2 <- ggplot(data.frame(x = "T_SIR", share = fa$share), aes(x, share)) +
+  geom_hline(yintercept = null_alm, linetype = 2, color = "gray50") +
+  geom_jitter(width = 0.15, height = 0, shape = 1, color = col_a) +
+  stat_summary(fun = median, geom = "crossbar", width = 0.5, linewidth = 0.3) +
+  labs(x = "ALMANAC", y = "Share with p <= 0.05")
+p1 + p2 + plot_layout(widths = c(2, 1))
+```
+
+## Figure 7, assembled
+
+```{r fig7-assembled, fig.width=11, fig.height=8}
+panF <- wrap_elements(full = p1 + p2 + plot_layout(widths = c(2, 1)))
+((pa + pb + pc) / (pd_ + pt + panF)) +
+  plot_annotation(tag_levels = "A", tag_suffix = ".") & theme(plot.tag = element_text(face = "bold"), legend.position = "bottom")
+```
+
+Read together, the panels carry the main message. The activity distributions (A) are wide and differ by study, the mean excess distributions (B) are narrow and centered near zero, activity falls on the identity line across batches (C) while the mean excess (D) and the statistic (E) scatter, and the family shares (F) are about half of the O'Neil units under BH but close to the null rate for ALMANAC plates.
+
+## What do we see?
+
+In O'Neil, BH at $q=0.05$ within the declared families rejects `r n0(sum(O$bh_family <= 0.05))` of `r n0(nrow(O))` units (`r pct1(mean(O$bh_family <= 0.05))`), in all `r length(unique(O$cell_line[O$bh_family <= 0.05]))` cell lines and `r length(unique(O$pair[O$bh_family <= 0.05]))` drug pairs; the block-level $t$ test rejects `r n0(sum(O$q_companion <= 0.05))`, `r n0(sum(O$q_tstd <= 0.05 & O$q_companion <= 0.05))` of them also rejected by $T_{\mathrm{SIR}}$. The median family has `r pct1(median(fo[["T_SIR (BH)"]]))` of its units rejected by $T_{\mathrm{SIR}}$ and `r pct1(median(fo[["Block-level t (BH)"]]))` by the block-level $t$ test. These are rejections of the reference, since the reported single-agent curves are held fixed, and they cluster on drugs: `r n0(fc$ONEIL$drug_clusters_ge3_calls)` pairings of a family with a drug carry at least three rejections, and BEZ-235 in T-47D is rejected with all `r big$n_tested` of its partners, against `r round(big$expected_if_random, 1)` expected at the family's rejection rate. Pooling the same p-values over the whole study instead of the families gives `r n0(sum(bh_pool <= 0.05))` rejections, with `r n0(bhj$both)` in common with the family rule, `r bhj$families_only` only under the families and `r bhj$pooled_only` only under pooling.
+
+In ALMANAC, `r n0(a05)` plates (`r pct1(a05 / n_alm)`) have $p\le0.05$, against a real-noise null rate of `r sprintf("%.2f%%", 100 * null_alm)`; the median family has `r pct1(median(fa$share))`, and `r sum(fa$share > null_alm)` of 60 families lie above the null rate. We do not report BH lists: the plate-difference reference offers a median of `r nb$bank_pool_sets_median` donor pairs per stratum, about `r nb$distinct_reference_noise_matrices_median` distinct reference noise matrices, so a plate that exceeds all of them gets the minimum p-value whatever $B$ is. `r n0(sum(bhA <= 0.05))` plates would be called by BH within cell line, `r n0(sum(bhA <= 0.05 & at_floor))` of them at that minimum, and none remains called once p-values are floored at the bank resolution. Of the plates with $p\le0.05$, `r pct1(mean(frag$fragility_cell_p > 0.05))` fail the cell fragility check and `r pct1(mean(frag$fragility_sa_p > 0.05))` the single-agent row check, so most ALMANAC single-plate calls depend on one cell or one single-agent dose row.
+
+The region scan claims a region in `r n0(sum(O$p_scan <= 0.05))` O'Neil units and `r n0(sum(A$p_scan <= 0.05))` ALMANAC plates (`r pct1(sum(A$p_scan <= 0.05) / n_alm)`); on real data it is exploratory, with claims at level 0.05 only.
+
+## Decision point
+
+**Decision point.** Whether these choices are justified depends on the calibration of the tests on real noise, which Figure S6 and Table S9 report.
+
+# Figure S6 and Table S9: real-noise null checks
+
+## Rationale
+
+The statements above depend on the test being calibrated on real noise. The null checks take exact-Bliss targets with the real noise of each screen added and measure the rejection rate of each test. For O'Neil, the 22,422 four-block sets carry the unclipped residual of a distinct donor set, with the reference cross-fitted against the donors' cell-line half. For ALMANAC, the 3,062 orientation pairs supply noise $\pm(Y_1 - Y_2^\top)/\sqrt2$ (both signs, 6,124 plates), with the reference from the other cell-line half.
+
+Figure S6 is drawn below from the rates in the next section.
+
+## Rebuilding the rates
+
+```{r tabS9}
+nul$test_label <- recode(nul$column, p_tstd = "SIR statistic", p_scan = "Region scan", p_companion = "Companion mean test",
+                         p_fixed_edge = "Fixed-edge t", p_mean_boot = "Bootstrap mean")
+w <- wilson(nul$k, nul$n)
+nul2 <- cbind(nul[, c("study", "test_label", "level", "k", "n")], w)
+s9 <- nul2[nul2$level %in% c(0.05, 0.01, 0.005) & nul2$test_label %in% c("SIR statistic", "Region scan", "Companion mean test"), ]
+s9$cell <- sprintf("%.4f [%.4f, %.4f]", s9$rate, s9$lo, s9$hi)
+s9w <- pivot_wider(s9[, c("study", "test_label", "level", "cell")], names_from = level, values_from = cell)
+kb(s9w, row.names = FALSE)
+cat("Largest difference between the Wilson limits recomputed here and those in null_summary.csv:",
+    format(max(abs(w$lo - nul$lo), abs(w$hi - nul$hi)), digits = 2), "\n")
+g <- function(st, col, lev) nul$rate[nul$study == st & nul$column == col & nul$level == lev]
+check("O'Neil null rate, T_SIR, 0.05", 0.0481, g("oneil", "p_tstd", 0.05), 5e-5)
+check("O'Neil null rate, T_SIR, 0.01", 0.0121, g("oneil", "p_tstd", 0.01), 5e-5)
+check("O'Neil null rate, T_SIR, 0.005", 0.0059, g("oneil", "p_tstd", 0.005), 5e-5)
+check("O'Neil null rate, block-level t, 0.05", 0.0424, g("oneil", "p_companion", 0.05), 5e-5)
+check("O'Neil null rate, block-level t, 0.01", 0.0075, g("oneil", "p_companion", 0.01), 5e-5)
+check("O'Neil null rate, block-level t, 0.005", 0.0039, g("oneil", "p_companion", 0.005), 5e-5)
+check("ALMANAC null rate, T_SIR, 0.05", 0.0395, g("almanac", "p_tstd", 0.05), 5e-5)
+check("ALMANAC null rate, T_SIR, 0.01", 0.0171, g("almanac", "p_tstd", 0.01), 5e-5)
+check("ALMANAC null rate, T_SIR, 0.005", 0.0132, g("almanac", "p_tstd", 0.005), 5e-5)
+check("O'Neil null rate, scan, 0.05", 0.0504, g("oneil", "p_scan", 0.05), 5e-5)
+check("O'Neil null rate, scan, 0.01", 0.0135, g("oneil", "p_scan", 0.01), 5e-5)
+check("O'Neil null rate, scan, 0.005", 0.0070, g("oneil", "p_scan", 0.005), 5e-5)
+check("ALMANAC null rate, scan, 0.05", 0.0478, g("almanac", "p_scan", 0.05), 5e-5)
+check("ALMANAC null rate, scan, 0.01", 0.0191, g("almanac", "p_scan", 0.01), 5e-5)
+check("ALMANAC null rate, scan, 0.005", 0.0150, g("almanac", "p_scan", 0.005), 5e-5)
+check("ALMANAC null plates at the minimum p-value", 0.0096, g("almanac", "p_tstd", 1e-04), 5e-5)
+check("O'Neil null targets", 22422, nul$n[nul$study == "oneil"][1], 0.5)
+check("ALMANAC null targets", 6124, nul$n[nul$study == "almanac"][1], 0.5)
+```
+
+## Figure S6
+
+```{r figS6-plot, fig.height=3.2}
+rr <- nul2[nul2$level %in% c(0.05, 0.01, 0.005) & nul2$test_label %in% c("SIR statistic", "Region scan", "Companion mean test"), ]
+rr$ratio <- rr$rate / rr$level; rr$lo_r <- rr$lo / rr$level; rr$hi_r <- rr$hi / rr$level
+rr$study <- recode(rr$study, oneil = "O'Neil", almanac = "ALMANAC")
+ggplot(rr, aes(factor(level), ratio, color = test_label, shape = test_label)) +
+  geom_hline(yintercept = 1, linetype = 2, color = "gray50") +
+  geom_pointrange(aes(ymin = lo_r, ymax = hi_r), position = position_dodge(width = 0.5), size = 0.35) +
+  facet_wrap(~study, labeller = labeller(study = c("O'Neil" = "A. O'Neil", "ALMANAC" = "B. ALMANAC"))) +
+  labs(x = "Nominal level", y = "Rejection rate / nominal level", color = NULL, shape = NULL)
+```
+
+## What do we see?
+
+On exact-Bliss O'Neil targets with real residuals, $T_{\mathrm{SIR}}$ rejects `r f4(g("oneil", "p_tstd", 0.05))`, `r f4(g("oneil", "p_tstd", 0.01))` and `r f4(g("oneil", "p_tstd", 0.005))` at levels 0.05, 0.01 and 0.005, and the block-level $t$ test `r f4(g("oneil", "p_companion", 0.05))`, `r f4(g("oneil", "p_companion", 0.01))` and `r f4(g("oneil", "p_companion", 0.005))`: close to nominal at 0.05 and slightly liberal for $T_{\mathrm{SIR}}$ at the smaller levels (ratios `r round(g("oneil", "p_tstd", 0.01) / 0.01, 2)` and `r round(g("oneil", "p_tstd", 0.005) / 0.005, 2)`). On ALMANAC plate differences, $T_{\mathrm{SIR}}$ rejects `r f4(g("almanac", "p_tstd", 0.05))` at 0.05 but `r f4(g("almanac", "p_tstd", 0.01))` at 0.01 and `r f4(g("almanac", "p_tstd", 0.005))` at 0.005, which is `r round(g("almanac", "p_tstd", 0.01) / 0.01, 1)` and `r round(g("almanac", "p_tstd", 0.005) / 0.005, 1)` times nominal, and `r pct1(g("almanac", "p_tstd", 1e-04))` of the null plates receive the minimum p-value. The companion V2Sp test is liberal at 0.05 on ALMANAC (`r f4(g("almanac", "p_companion", 0.05))`). The region scan is at `r f4(g("oneil", "p_scan", 0.05))` and `r f4(g("almanac", "p_scan", 0.05))` at 0.05.
+
+These rates are the reason for the two summaries: ALMANAC claims are made at level 0.05 only, where the rate is below nominal, and BH lists, which rest on the lower tail, are not used for single plates.
+
+## Decision point
+
+**Decision point.** With the null behavior known, we ask whether the scores point at pairs that are known to be synergistic.
+
+# Figure S3 and Table S8: positive controls and the inactive-agent subgroup
+
+## Rationale
+
+If the mean excess measures synergy, drug pairs with independent evidence of synergy should rank high within their cell line. We define a control as a drug pair and cell line cluster, take the within-cell-line percentile of its mean excess, average over the units of the cluster, and test the clusters against 0.5. In O'Neil the controls come from independent same-line literature evidence. In ALMANAC the positives are the in vitro results reported by the source study, and they were selected on the same wells, so they confirm the mapping and the estimand and do not provide an independent detection.
+
+Figure S3 is drawn below from the control tables and the released table.
+
+## Rebuilding the percentile calculation from the released table
+
+```{r controls-rebuild}
+pctw <- function(x, g) {
+  r <- ave(x, g, FUN = function(v) rank(v, ties.method = "average"))
+  n <- ave(x, g, FUN = function(v) sum(!is.na(v)))
+  (r - 0.5) / n
+}
+U$pct <- NA_real_
+for (st in c("ONEIL", "ALMANAC")) { i <- U$study == st; U$pct[i] <- pctw(U$mean_excess[i], U$cell_line[i]) }
+
+sl <- read_result(file.path(REAL, "controls_same_line_units.csv"))
+sp <- strsplit(sl$pair, " \\+ ")
+sl$unit_id <- paste0(sapply(sp, `[`, 1), "|", sapply(sp, `[`, 2), "|", sl$cell_line, "|batch", sl$batch)
+msl <- merge(sl, U[, c("unit_id", "pct")], by = "unit_id")
+cl_sl <- tapply(msl$pct, paste(msl$pair, msl$cell_line), mean)
+wt <- wilcox.test(cl_sl - 0.5, alternative = "greater", exact = TRUE)
+
+cu <- read_result(file.path(REAL, "controls_units.csv"))
+cal <- cu[cu$study == "ALMANAC" & !startsWith(cu$group, "AL-N1"), c("unit_id", "pair", "cell_line")]
+mal <- merge(cal, U[, c("unit_id", "pct")], by = "unit_id")
+cl_al <- tapply(mal$pct, paste(mal$pair, mal$cell_line), mean)
+
+cr <- data.frame(
+  control = c("O'Neil, independent same-line evidence", "ALMANAC, every source-reported positive"),
+  units = c(nrow(msl), nrow(mal)), clusters = c(length(cl_sl), length(cl_al)),
+  mean_percentile = c(mean(cl_sl), mean(cl_al)), median_percentile = c(median(cl_sl), median(cl_al)),
+  wilcoxon_p = c(wt$p.value, wilcox.test(cl_al - 0.5, alternative = "greater")$p.value))
+kb(cr, digits = 4, row.names = FALSE, format.args = list(scientific = FALSE))
+check("O'Neil same-line clusters", 18, length(cl_sl), 0.5)
+check("O'Neil same-line mean percentile", 0.719, mean(cl_sl), 5e-4)
+check("O'Neil same-line Wilcoxon p", 0.0014, wt$p.value, 5e-5)
+check("ALMANAC source-reported positives (clusters)", 64, length(cl_al), 0.5)
+check("ALMANAC positives, median percentile", 0.988, median(cl_al), 5e-4)
+```
+
+## Figure S3
+
+```{r figS3-plot, fig.width=10, fig.height=8}
+tok <- sub(" .*$", "", cu$group)
+cuu <- merge(cu[, c("unit_id", "study", "pair", "cell_line")], U[, c("unit_id", "pct")], by = "unit_id")
+cuu$grp <- tok[match(cuu$unit_id, cu$unit_id)]
+cuu$cluster <- paste(cuu$pair, cuu$cell_line)
+strip <- cuu %>% group_by(study, grp, cluster) %>% summarise(pct = mean(pct), .groups = "drop")
+inact <- function(st, nm) {
+  Z <- U[U$study == st, ]
+  w <- Z$edge_row_top >= 0.9 & Z$edge_col_top >= 0.9 & !(Z$unit_id %in% cu$unit_id[cu$study == st])
+  z <- Z[w, ]
+  cl <- tapply(z$pct, paste(z$pair, z$cell_line), mean)
+  data.frame(study = st, grp = nm, cluster = names(cl), pct = as.numeric(cl))
+}
+strip <- bind_rows(strip, inact("ONEIL", "ON-N3"), inact("ALMANAC", "AL-N2"))
+ord_o <- c("ON-A", "ON-A2", "ON-B", "ON-S", "ON-P", "ON-X", "ON-N1", "ON-N2", "ON-N3")
+ord_a <- c("AL-XG+", "AL-XGw", "AL-XG0", "AL-XGu", "AL-IV", "AL-N1", "AL-N2")
+stripplot <- function(st, ord) {
+  d <- strip[strip$study == st & strip$grp %in% ord, ]
+  d$grp <- factor(d$grp, levels = ord)
+  d$neg <- grepl("-N", d$grp)
+  ggplot(d, aes(grp, pct)) + geom_hline(yintercept = 0.5, linetype = 2, color = "gray50") +
+    geom_jitter(aes(color = neg), width = 0.2, height = 0, alpha = 0.5, size = 0.8, show.legend = FALSE) +
+    stat_summary(fun = mean, geom = "point", size = 2) +
+    scale_color_manual(values = c("TRUE" = col_a, "FALSE" = col_o)) +
+    scale_x_discrete(labels = function(x) sub("^(ON|AL)-", "", x)) +
+    labs(x = "Control group", y = paste0(ifelse(st == "ONEIL", "O'Neil", "ALMANAC"), ": within-cell-line percentile"))
+}
+sA <- stripplot("ONEIL", ord_o); sC <- stripplot("ALMANAC", ord_a)
+plp <- read_result("realdata/controls_pair_level.csv")
+plp <- plp[order(plp$rank_mean_pct_mean_excess), ]
+plp$pair <- factor(plp$pair, levels = plp$pair)
+sB <- ggplot(plp, aes(rank_mean_pct_mean_excess, pair, color = startsWith(group, "ON-N1"))) +
+  geom_vline(xintercept = 0.5, linetype = 2, color = "gray50") + geom_point() +
+  geom_point(aes(rank_among_drug_sharing_pairs), shape = 1) +
+  scale_color_manual(values = c("TRUE" = col_a, "FALSE" = col_o), guide = "none") +
+  labs(x = "Rank (filled: all pairs; open: pairs sharing a drug)", y = NULL)
+dd <- bind_rows(lapply(c("ON-A + A2 + B pooled", "ON-S ", "ON-P ", "ON-N1 ", "AL-XG+ ", "AL-ALL", "AL-N2 "), function(g) {
+  r <- cs[startsWith(cs$group, g), ]
+  data.frame(study = r$study, grp = sub(" .*$", "", g), rate = r$rate_tstd_p05, lo = r$rate_tstd_p05_lo, hi = r$rate_tstd_p05_hi, bg = r$bg_rate_tstd_p05)
+}))
+dd$grp <- factor(dd$grp, levels = unique(dd$grp))
+sD <- ggplot(dd, aes(grp)) + geom_col(aes(y = rate, fill = study), width = 0.35, position = position_nudge(x = -0.2)) +
+  geom_errorbar(aes(ymin = lo, ymax = hi), width = 0.1, position = position_nudge(x = -0.2)) +
+  geom_col(aes(y = bg), width = 0.35, fill = "gray25", position = position_nudge(x = 0.2)) +
+  scale_fill_manual(values = c(ONEIL = col_o, ALMANAC = col_a), labels = c(ONEIL = "O'Neil", ALMANAC = "ALMANAC")) +
+  labs(x = NULL, y = expression("Share with "*T[SIR]*" p <= 0.05"), fill = NULL) + theme(axis.text.x = element_text(angle = 35, hjust = 1))
+(sA + sB) / (sC + sD) + plot_annotation(tag_levels = "A", tag_suffix = ".") & theme(plot.tag = element_text(face = "bold"))
+```
+
+In panel D the colored bars are the share of cluster-level units with $T_{\mathrm{SIR}}$ at $p\le0.05$ in each control group and the dark bars are the background rate; the first group is the pooled O'Neil same-line set and AL-ALL is the union of ALMANAC positives.
+
+## Named pairs in O'Neil
+
+The pair-level result ranks each pair by its mean percentile over all of its cell lines among the 583 pairs.
+
+```{r pair-ranks}
+Op <- U[U$study == "ONEIL", ]
+pp <- tapply(Op$pct, Op$pair, mean)
+rk <- rank(pp) / length(pp)
+pl <- read_result(file.path(REAL, "controls_pair_level.csv"))
+pl$rank_rebuilt <- rk[pl$pair]
+pl$group <- sub(" .*$", "", pl$group)
+kb(pl[order(pl$rank_rebuilt, decreasing = TRUE), c("group", "pair", "n_units", "rank_rebuilt", "rank_mean_pct_mean_excess")],
+   digits = 3, row.names = FALSE)
+lp <- pl[pl$group == "ON-P", ]
+n1 <- pl[pl$group == "ON-N1", ]
+check("Literature-positive pairs (count)", 10, nrow(lp), 0.5)
+check("Literature-positive pairs, lowest rank", 0.684, min(lp$rank_rebuilt), 5e-4)
+check("Literature-positive pairs, highest rank", 0.986, max(lp$rank_rebuilt), 5e-4)
+check("MK-8776 + 5-FU rank", 0.391, n1$rank_rebuilt[n1$pair == "5-FU + MK-8776"], 5e-4)
+check("MK-8776 + SN-38 rank", 0.280, n1$rank_rebuilt[n1$pair == "MK-8776 + SN-38"], 5e-4)
+```
+
+## Table S8 and detection rates
+
+```{r tabS8}
+sel <- c("ON-A + A2 + B pooled", "ON-S ", "ON-P ", "ON-N1 ", "AL-XG+ ", "AL-ALL", "AL-N2 ")
+s8 <- bind_rows(lapply(sel, function(g) cs[startsWith(cs$group, g), ])) %>%
+  transmute(study, group = sub(" \\(.*$", "", group), clusters = n_clusters, mean_percentile = mean_pct_mean_excess,
+            median_percentile = median_pct_mean_excess, wilcoxon_p = wilcoxon_p_pct_mean_excess,
+            rate_p05 = rate_tstd_p05, lo = rate_tstd_p05_lo, hi = rate_tstd_p05_hi, background = bg_rate_tstd_p05)
+kb(s8, digits = 4, row.names = FALSE, format.args = list(big.mark = ",", scientific = FALSE))
+rowof <- function(g) cs[startsWith(cs$group, g), ]
+check("O'Neil same-line detection by T_SIR at 0.05", 0.833, rowof("ON-A + A2 + B pooled")$rate_tstd_p05, 5e-4)
+check("O'Neil same-line background detection", 0.608, rowof("ON-A + A2 + B pooled")$bg_rate_tstd_p05, 5e-4)
+check("ALMANAC positives with xenograft support: detection", 0.80, rowof("AL-XG+ ")$rate_tstd_p05, 5e-3)
+check("ALMANAC positives with xenograft support: interval, lower", 0.55, rowof("AL-XG+ ")$rate_tstd_p05_lo, 5e-3)
+check("ALMANAC positives with xenograft support: interval, upper", 0.93, rowof("AL-XG+ ")$rate_tstd_p05_hi, 5e-3)
+check("ALMANAC background detection", 0.067, rowof("AL-XG+ ")$bg_rate_tstd_p05, 5e-4)
+```
+
+The same-line control MK-8776 with gemcitabine was rejected in both O'Neil batches in SW-620 and in HCT116:
+
+```{r mk8776}
+sl2 <- sl[sl$pair == "GEMCITABINE + MK-8776" & sl$cell_line %in% c("SW-620", "HCT116"), c("pair", "cell_line", "batch", "mean_excess", "mean_excess_se", "p_tstd", "q_tstd")]
+kb(sl2, digits = 4, row.names = FALSE)
+both_rej <- sl2 %>% group_by(cell_line) %>% summarise(rejected_in_both = all(q_tstd <= 0.05), batches = n(), .groups = "drop")
+kb(both_rej, row.names = FALSE)
+```
+
+## The inactive-single-agent subgroup
+
+ALMANAC plates in which both single agents leave viability at or above 0.9 at the top dose are pairs whose single agents are inactive. They can still be synergistic, so we report the subgroup as an observation and not as a negative control.
+
+```{r inactive}
+ctrl_al <- cu$unit_id[cu$study == "ALMANAC"]
+Zi <- U[U$study == "ALMANAC", ]
+w_in <- Zi$edge_row_top >= 0.9 & Zi$edge_col_top >= 0.9 & !(Zi$unit_id %in% ctrl_al)
+bg_out <- !(Zi$unit_id %in% ctrl_al) & !w_in
+ina <- data.frame(
+  group = c("Both single agents inactive", "All other plates (background in Table S8)", "All ALMANAC plates"),
+  plates = c(sum(w_in), sum(bg_out), nrow(Zi)),
+  share_p_le_0.05 = c(mean(Zi$p_tstd[w_in] <= 0.05), mean(Zi$p_tstd[bg_out] <= 0.05), mean(Zi$p_tstd <= 0.05)))
+kb(ina, digits = 4, row.names = FALSE, format.args = list(big.mark = ","))
+check("ALMANAC inactive-agent subgroup, share with p <= 0.05", 0.100, ina$share_p_le_0.05[1], 5e-4)
+check("ALMANAC comparison group, share with p <= 0.05", 0.047, ina$share_p_le_0.05[2], 5e-4)
+Zo <- U[U$study == "ONEIL", ]
+w_o <- Zo$edge_row_top >= 0.9 & Zo$edge_col_top >= 0.9 & !(Zo$unit_id %in% cu$unit_id[cu$study == "ONEIL"])
+o_in <- mean(Zo$p_tstd[w_o] <= 0.05)
+o_out <- mean(Zo$p_tstd[!w_o & !(Zo$unit_id %in% cu$unit_id[cu$study == "ONEIL"])] <= 0.05)
+cat(sprintf("O'Neil, same subgroup: %s units, %.3f with p <= 0.05, against %.3f for the other units\n", n0(sum(w_o)), o_in, o_out))
+```
+
+## What do we see?
+
+In O'Neil, the `r length(cl_sl)` clusters with independent same-line evidence (for example MK-8776 with gemcitabine in SW-620 and HCT116) sit at a mean within-cell-line percentile of `r f3(mean(cl_sl))` (one-sided Wilcoxon $p=$ `r signif(wt$p.value, 2)`), `r pct1(cs[startsWith(cs$group, "ON-A + A2 + B pooled"), ]$rate_tstd_p05)` of them are detected by $T_{\mathrm{SIR}}$ at $p\le0.05$, against `r pct1(cs[startsWith(cs$group, "ON-A + A2 + B pooled"), ]$bg_rate_tstd_p05)` of all units in the same cell lines. The ten literature-positive pairs rank between `r f3(min(lp$rank_rebuilt))` and `r f3(max(lp$rank_rebuilt))` among the 583 pairs, and the two reported non-synergistic pairs (MK-8776 with 5-fluorouracil or SN-38) rank `r f3(n1$rank_rebuilt[n1$pair == "5-FU + MK-8776"])` and `r f3(n1$rank_rebuilt[n1$pair == "MK-8776 + SN-38"])`. MK-8776 with gemcitabine was rejected in both batches in both lines; with half of the O'Neil units rejected, a rejection in both batches is weak evidence on its own.
+
+In ALMANAC, the `r length(cl_al)` source-reported in vitro positives sit at a median percentile of `r f3(median(cl_al))`. They were selected on the same wells, so this confirms the mapping and the estimand and is not an independent detection. For positives with xenograft support, detection is `r f3(rowof("AL-XG+ ")$rate_tstd_p05)` against `r f3(rowof("AL-XG+ ")$bg_rate_tstd_p05)` for background plates.
+
+ALMANAC plates with both single agents inactive have $T_{\mathrm{SIR}}$ at $p\le0.05$ on `r pct1(ina$share_p_le_0.05[1])` of `r n0(ina$plates[1])` plates, against `r pct1(ina$share_p_le_0.05[2])` for the other plates; the same comparison in O'Neil is `r pct1(o_in)` against `r pct1(o_out)`. Because inactive agents can still be synergistic, we report this as an observation and not as a negative control. The comparison group is all plates outside the subgroup: all ALMANAC plates together have a rate of `r pct1(ina$share_p_le_0.05[3])`.
+
+## Decision point
+
+**Decision point.** The scores rank known positives high. A last question is whether these findings depend on doses above those reachable in patients.
+
+# Table S11: the clinical concentration window
+
+## Rationale
+
+Many screen doses exceed what can be reached in patients. We repeat the O'Neil and ALMANAC analyses restricted to nonzero doses at most three times the clinical maximal plasma concentration $C_{\max}$ of both drugs, and ask whether the findings depend on the supraclinical doses.
+
+```{r window}
+ws <- read_result(file.path(REAL, "window_summary.json"))
+wt <- data.frame(
+  quantity = c("Drugs with a concentration value (of the table)", "Units with both drugs in the table",
+               "Untestable after restriction", "Testable units", "Testable units keeping every dose",
+               "BH calls of T_SIR, full grid", "BH calls of T_SIR, window", "BH calls in both",
+               "T_SIR p <= 0.05, full grid", "T_SIR p <= 0.05, window",
+               "Companion BH calls, full / window / both", "Spearman of mean excess, full vs window"),
+  `O'Neil` = c(sprintf("%d of %d", ws$oneil$drugs_with_cmax_present, ws$oneil$drugs_in_cmax_table),
+               n0(ws$oneil$units_both_drugs_with_cmax), n0(ws$oneil$units_untestable_after_restriction),
+               n0(ws$oneil$units_testable), n0(ws$oneil$units_window_keeps_all_doses),
+               n0(ws$oneil$tstd_bh_calls_full), n0(ws$oneil$tstd_bh_calls_window), n0(ws$oneil$tstd_bh_calls_both),
+               n0(ws$oneil$tstd_nominal_full), n0(ws$oneil$tstd_nominal_window),
+               paste(ws$oneil$companion_bh_calls_full, ws$oneil$companion_bh_calls_window, ws$oneil$companion_bh_calls_both, sep = " / "),
+               f3(ws$oneil$spearman_mean_excess_full_vs_window)),
+  ALMANAC = c(sprintf("%d of %d", ws$almanac$drugs_with_cmax_present, ws$almanac$drugs_in_cmax_table),
+              n0(ws$almanac$units_both_drugs_with_cmax), n0(ws$almanac$units_untestable_after_restriction),
+              n0(ws$almanac$units_testable), n0(ws$almanac$units_window_keeps_all_doses),
+              "not used", "not used", "not used",
+              n0(ws$almanac$tstd_nominal_full), n0(ws$almanac$tstd_nominal_window), "not used",
+              f3(ws$almanac$spearman_mean_excess_full_vs_window)),
+  check.names = FALSE)
+kb(wt, row.names = FALSE)
+check("Window: O'Neil testable units", 4368, ws$oneil$units_testable, 0.5)
+check("Window: O'Neil BH calls on the full grid", 2109, ws$oneil$tstd_bh_calls_full, 0.5)
+check("Window: O'Neil BH calls in the window", 1905, ws$oneil$tstd_bh_calls_window, 0.5)
+check("Window: O'Neil BH calls in both", 1847, ws$oneil$tstd_bh_calls_both, 0.5)
+```
+
+The window analysis reuses the same fitting call on the restricted grid; the units that keep all four doses reproduce the full-grid results exactly (`identity_check_max_abs_diff` is `r ws$oneil$identity_check_max_abs_diff` for O'Neil and `r ws$almanac$identity_check_max_abs_diff` for ALMANAC).
+
+## What do we see?
+
+Of the `r n0(ws$oneil$units_both_drugs_with_cmax)` O'Neil units whose two drugs have a concentration value, `r n0(ws$oneil$units_testable)` remain testable in the window (`r n0(ws$oneil$units_untestable_after_restriction)` lose a drug entirely) and `r n0(ws$oneil$units_window_keeps_all_doses)` keep every dose. BH rejects `r n0(ws$oneil$tstd_bh_calls_full)` of the testable units on the full grid, `r n0(ws$oneil$tstd_bh_calls_window)` in the window and `r n0(ws$oneil$tstd_bh_calls_both)` in both, and the mean excess correlates at `r f3(ws$oneil$spearman_mean_excess_full_vs_window)` between the two grids. In ALMANAC, `r n0(ws$almanac$units_testable)` plates are testable, `r n0(ws$almanac$tstd_nominal_full)` have $p\le0.05$ on the full grid and `r n0(ws$almanac$tstd_nominal_window)` in the window, with a correlation of `r f3(ws$almanac$spearman_mean_excess_full_vs_window)`. Restricting to clinical concentrations therefore changes the rejections little.
+
+## Decision point
+
+**Decision point.** The released table carries everything needed to repeat these summaries. The next section shows how to read it and how to run the same analysis on a matrix.
+
+# How to use the code
+
+## Read the released table and rank the pairs of a cell line
+
+The table has one row per analysis unit and no binary labels. The score to rank on is the mean Bliss excess with its standard error; the p- and q-values are within the declared family (`family`). Below we rank the O'Neil pairs of the HCT116 cell line in the first batch.
+
+```{r rank-example}
+cell <- "HCT116"
+ex <- O[O$cell_line == cell & O$batch == 0, c("drug_row", "drug_col", "activity", "mean_excess", "mean_excess_se", "t_std", "p_tstd", "q_tstd")]
+ex$lo <- ex$mean_excess - 1.96 * ex$mean_excess_se
+ex$hi <- ex$mean_excess + 1.96 * ex$mean_excess_se
+ex <- ex[order(-ex$mean_excess), ]
+ex$pair <- paste(ex$drug_row, ex$drug_col, sep = " + ")
+kb(head(ex[, c("pair", "activity", "mean_excess", "mean_excess_se", "lo", "hi", "q_tstd")], 10), digits = 3, row.names = FALSE)
+cat(nrow(ex), "pairs in", cell, "(batch 0); BH calls within the family:", sum(ex$q_tstd <= 0.05), "\n")
+```
+
+```{r rank-plot, fig.height=4}
+top <- head(ex, 15)
+top$pair <- factor(top$pair, levels = rev(top$pair))
+ggplot(top, aes(mean_excess, pair)) + geom_vline(xintercept = 0, linetype = 2, color = "gray50") +
+  geom_pointrange(aes(xmin = lo, xmax = hi), color = col_o, size = 0.4) +
+  labs(x = "Mean Bliss excess (95% interval from its standard error)", y = NULL,
+       title = paste("O'Neil, ", cell, ", batch 0: top 15 pairs by mean excess", sep = ""))
+```
+
+These are tests relative to the reported single-agent curves. A pair near the top of this list is a candidate for a replicated experiment, and the release is intended to prioritize such experiments.
+
+## Run the same analysis on one matrix, and on a small screen
+
+`sir_fit()` takes one viability matrix or one replicate stack. Below, a design-P unit like an O'Neil unit: four replicate combination blocks whose first row and column hold the same reported single-agent curves, held fixed (`sa_replicates = Inf` is the default). The noise is Gaussian with a fixed SD here; for real data, build the noise model from replicate residuals with `sir_sd_from_replicates()` and `sir_noise_bank()`.
+
+```{r pkg-fit}
+a <- c(1, 0.90, 0.72, 0.50, 0.30)
+b <- c(1, 0.92, 0.78, 0.55, 0.35)
+make_P <- function(syn, seed, sd = 0.04) {
+  set.seed(seed)
+  truth <- outer(a, b)
+  truth[3:5, 3:5] <- truth[3:5, 3:5] * exp(-syn)
+  Y <- array(0, c(4, 5, 5))
+  for (r in 1:4) { Y[r, , ] <- truth + matrix(rnorm(25, sd = sd), 5); Y[r, 1, ] <- b; Y[r, , 1] <- a }
+  Y
+}
+noise <- sir_noise_parametric(sd = 0.04)
+fit_syn <- sir_fit(make_P(0.5, 1), design = "P", noise = noise, seed = 1)
+fit_null <- sir_fit(make_P(0, 2), design = "P", noise = noise, seed = 1)
+summary(fit_syn)
+```
+
+```{r pkg-fit-table}
+one <- function(f) data.frame(activity = f$activity, mean_excess = f$mean_excess, mean_excess_se = f$mean_excess_se,
+                              t_std = f$t_std, p_tstd = f$p_tstd, p_scan = f$p_scan)
+kb(rbind(`Synergy at high doses` = one(fit_syn), `Exact Bliss` = one(fit_null)), digits = 4)
+```
+
+The fields of the fit are the columns of the released table. For a family of matrices, `sir_screen()` applies BH within the declared families.
+
+```{r pkg-screen}
+dat <- data.frame(id = paste0("m", 1:8), family = rep(c("lineA", "lineB"), each = 4), stringsAsFactors = FALSE)
+syn <- c(0, 0, 0.6, 0, 0, 0.5, 0, 0.7)
+dat$Y <- lapply(1:8, function(i) make_P(syn[i], 10 + i))
+scr <- sir_screen(dat, q = 0.05, noise = noise, design = "P", seed = 3)
+kb(scr[, c("id", "family", "p", "q", "call", "activity", "mean_excess", "mean_excess_se")], digits = 4, row.names = FALSE)
+```
+
+Matrices m3, m6 and m8 carry synergy; m1, m2, m4, m5 and m7 are exact Bliss. As in the released table, `q` is within `family`, and calls need independent experimental confirmation.
+
+In the first example, the O'Neil-style unit with synergy at high doses has a SIR statistic of `r round(fit_syn$t_std, 1)` and $p=$ `r fit_syn$p_tstd` (the minimum possible), with mean excess `r f3(fit_syn$mean_excess)`; the exact-Bliss unit has $p=$ `r fit_null$p_tstd`. In the small screen, BH within family calls matrices `r paste(scr$id[scr$call], collapse = ", ")`, the three that carry synergy. The column names of the fit and of the screen output (`activity`, `mean_excess`, `mean_excess_se`, `p_tstd`) are those of the released table.
+
+# Conclusions
+
+## What we found
+
+- **Activity is the stable signal.** Across O'Neil batches activity reproduces at `r f3(R1$spearman[1])`, the mean excess at `r f3(R1$spearman[2])` and the SIR statistic at `r f3(R1$spearman[3])`; in ALMANAC orientation pairs the values are `r f3(orient$spearman[1])`, `r f3(orient$spearman[2])` and `r f3(orient$spearman[3])`. Most of activity is explained by the single agents.
+- **O'Neil rejections test the reference.** BH within families rejects `r n0(sum(O$bh_family <= 0.05))` of `r n0(nrow(O))` units (`r pct1(mean(O$bh_family <= 0.05))`), they cluster on drugs, and only `r calls$both` of `r calls$first_batch` first-batch calls are repeated in the second batch (`r round(calls$expected_both, 1)` expected by chance).
+- **ALMANAC is summarized at level 0.05.** `r pct1(a05 / n_alm)` of plates have $p\le0.05$ against `r sprintf("%.2f%%", 100 * null_alm)` on real noise; BH lists are not used because `r n0(sum(bhA <= 0.05 & at_floor))` of `r n0(sum(bhA <= 0.05))` raw calls sit at the p-value floor.
+- **Controls rank high.** O'Neil same-line positives sit at percentile `r f3(mean(cl_sl))`; ALMANAC source-reported positives at `r f3(median(cl_al))` (a circular check).
+- **Clinical window.** Restricting to doses at most three times $C_{\max}$ changes the rejections little.
+
+## What it means
+
+Pair-level synergy claims from single matrices in these screens need replicated single agents measured with the combinations and a second experiment. The released scores (activity, mean excess with its standard error, the SIR statistic and its p-value within the family) are intended to prioritize such experiments.
+
+## Limits
+
+- The O'Neil tests are relative to the reported, pooled single-agent curves and do not include an experiment-level offset between the combination plates and those curves; any such offset or curve error reads as synergy.
+- ALMANAC single-plate p-values are limited by the resolution of the plate-difference reference, the lower tail was liberal on real noise, and the V2Sp companion test is liberal on plate noise and is not used for ALMANAC claims.
+- The region scan is exploratory on real data, with claims at level 0.05 only.
+- The ALMANAC positive controls were selected on the same wells, and the inactive-agent subgroup is an observation, since inactive agents can still be synergistic.
+- The release carries no binary synergy labels; calls depend on the family and the reference.
+
+## What to report
+
+Report the family and the null that each p-value refers to (`family`, `null_tested`), the mean excess with its standard error, and for single plates the fragility checks; claim ALMANAC findings at level 0.05 only.
+
+# Checks against the paper
+
+Every number below was computed in this notebook from the released table or the stage outputs and compared with the value printed in the paper or the supplement. A row matches when the computed value rounds to the printed one (the tolerance is half a unit in the last printed digit).
+
+```{r checks-table}
+CHECKS$match <- abs(CHECKS$computed - CHECKS$paper) <= CHECKS$tol + 1e-12
+out <- CHECKS[, c("item", "paper", "computed", "match")]
+kbl(out, digits = 5, row.names = FALSE, format.args = list(big.mark = ",")) %>%
+  kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE) %>%
+  row_spec(which(!CHECKS$match), bold = TRUE, color = "white", background = "#B2182B")
+cat(sum(CHECKS$match), "of", nrow(CHECKS), "numbers match.\n")
+```
+
+# Session information
+
+```{r session}
+sessionInfo()$R.version$version.string
+cat("SIR", as.character(packageVersion("SIR")), "\n")
+```

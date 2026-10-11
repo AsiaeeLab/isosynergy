@@ -1,0 +1,1088 @@
+---
+title: "Calibration and power of the SIR test"
+subtitle: "Main Figures 3 and 4, Supplementary Figures S1 and S2, Supplementary Tables S1 to S4 and S7"
+author: "SIR authors"
+date: "`r format(Sys.Date(), '%B %d, %Y')`"
+output:
+  html_document:
+    theme: flatly
+    toc: true
+    toc_float:
+      collapsed: false
+    toc_depth: 3
+    number_sections: true
+    code_folding: hide
+    fig_width: 9
+    fig_height: 6
+    df_print: kable
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE,
+                      fig.align = "center", out.width = "100%")
+source("_common.R")
+suppressPackageStartupMessages({
+  library(SIR)
+  library(data.table)
+  library(jsonlite)
+  library(patchwork)
+  library(scales)
+})
+options(width = 120, digits = 5)
+set.seed(20260101)
+theme_set(theme_report)
+
+COL <- c(tstd = "#0072B2", scan = "#D55E00", mean = "#009E73")
+LAB <- c(tstd = "SIR statistic", scan = "Region scan", mean = "Mean test")
+tbl <- function(x, ...) kbl_report(x, ...)
+f3 <- function(x, nd = 3) formatC(x, format = "f", digits = nd)
+# Round half up to nd decimals, the convention used when the paper tables were written.
+hu <- function(x, nd = 3) sprintf(paste0("%.", nd, "f"), floor(round(x * 10^nd, 6) + 0.5) / 10^nd)
+ci_txt <- function(r, lo, h, nd = 3) sprintf("%s [%s, %s]", hu(r, nd), hu(lo, nd), hu(h, nd))
+
+wilson <- function(k, n, z = 1.959964) {
+  p <- k / n; den <- 1 + z^2 / n
+  ctr <- (p + z^2 / (2 * n)) / den
+  h <- z * sqrt(p * (1 - p) / n + z^2 / (4 * n^2)) / den
+  cbind(lo = ctr - h, hi = ctr + h)
+}
+# Read a result as a data.table; factors become strings.
+rd <- function(rel) {
+  d <- as.data.table(read_result(rel))
+  for (cc in names(d)) if (is.factor(d[[cc]])) set(d, j = cc, value = as.character(d[[cc]]))
+  d
+}
+# Rejection counts per cell of a Monte Carlo grid from raw p-values (used for the small power table).
+rates <- function(d, keys, alpha = 0.05) {
+  tol <- alpha * (1 + 1e-6)
+  d[, .(n = .N,
+        k_tstd = sum(p_tstd <= tol, na.rm = TRUE),
+        k_scan = sum(p_scan <= tol, na.rm = TRUE),
+        k_mean = sum(p_mean <= tol, na.rm = TRUE),
+        eff_mean = eff_mean[1], eff_max = eff_max[1]), by = keys][
+    , `:=`(tstd = k_tstd / n, scan = k_scan / n, mean = k_mean / n)]
+}
+# The same from the shipped count tables (columns k_<test>_05 and k_<test>_01).
+lvl <- function(d, sfx) {
+  d <- copy(d)
+  for (t in c("tstd", "scan", "mean")) {
+    d[[paste0("k_", t)]] <- d[[paste0("k_", t, "_", sfx)]]
+    d[[t]] <- d[[paste0("k_", t)]] / d$n
+  }
+  d
+}
+# Worst (largest) rejection rate over the cells selected by `mask`, with a Wilson interval.
+worst <- function(R, test, mask = rep(TRUE, nrow(R))) {
+  g <- R[which(mask), ]
+  k <- g[[paste0("k_", test)]]
+  i <- which.max(k / g$n)
+  w <- wilson(k[i], g$n[i])
+  ks <- intersect(c("design", "I", "surface", "law", "cond"), names(g))
+  data.table(test = test, rate = k[i] / g$n[i], lo = w[1], hi = w[2], k = k[i], n = g$n[i],
+             cell = paste(sprintf("%s=%s", ks, unlist(g[i, ks, with = FALSE])), collapse = " "))
+}
+# Rejection rate with a confidence interval that treats the cell line as the cluster,
+# from per-cluster counts k out of n.
+cl_counts <- function(k, n) {
+  N <- sum(n); p <- sum(k) / N; K <- length(k)
+  se <- sqrt(K / (K - 1) * sum((k - p * n)^2)) / N
+  c(p = p, lo = max(0, p - 1.96 * se), hi = p + 1.96 * se)
+}
+
+# Running log of every number from the paper that this notebook recomputes.
+chk <- data.frame(item = character(), paper = numeric(), computed = numeric(),
+                  digits = integer(), match = logical(), stringsAsFactors = FALSE)
+add_chk <- function(item, paper, computed, digits = 3) {
+  ok <- abs(computed - paper) <= 0.5 * 10^(-digits) + 1e-9
+  chk[nrow(chk) + 1, ] <<- list(item, paper, computed, digits, ok)
+  invisible(ok)
+}
+
+# Table bodies written by the pipeline are LaTeX tabulars; read their cells for comparison.
+tex_rows <- function(rel) {
+  L <- readLines(result_path(rel))
+  L <- L[grepl("&", L, fixed = TRUE) & grepl("\\\\\\\\\\s*$", L)]
+  lapply(strsplit(sub("\\\\\\\\\\s*$", "", L), "&", fixed = TRUE), trimws)
+}
+tex_same <- function(mine, rel) {
+  th <- tail(tex_rows(rel), length(mine))
+  length(th) == length(mine) &&
+    all(vapply(seq_along(mine), function(i) identical(tail(th[[i]], length(mine[[i]])), mine[[i]]), logical(1)))
+}
+```
+
+```{r load-all}
+# Count tables (rejections k out of n per simulation cell). They are collapsed from the raw
+# Monte Carlo draws by data/make_aggregates.py; the raw draws (a million rows) come from stage 03.
+size_c    <- rd("aggregates/h2h_size_cells.csv")
+confirm_c <- rd("aggregates/h2h_confirm_cells.csv")
+power     <- rd("simulations/h2h_power.parquet")           # 14,000 rows
+rp_cells  <- rd("aggregates/h2h_realpower_cells.csv")
+nullsum   <- rd("realdata/null_summary.csv")
+nss       <- rd("aggregates/null_search_summary.csv")
+
+# Reference-component stress studies (Figure S1, Table S4)
+st_null_c  <- rd("aggregates/stress_null_cells.csv")
+st_mixed_c <- rd("aggregates/stress_mixed_cells.csv")
+st_shift_c <- rd("aggregates/stress_shift_cells.csv")
+st_fam     <- rd("simulations/stress_shared_null_family.csv")
+st_mfam    <- rd("simulations/stress_shared_mixed_family.csv")
+st_reps    <- rd("simulations/stress_reps.parquet")        # 30,000 rows
+
+# Grid study (Figure 4, Table S7)
+g_cnt  <- rd("simulations/grid_counts.csv")
+g_e80  <- rd("simulations/grid_effect80.csv")
+g_size <- rd("simulations/grid_size.csv")
+g_num  <- read_result("simulations/grid_numbers.json", simplifyVector = TRUE)
+
+# Berger-Boos study (Figure S2)
+bb_rows <- rbind(rd("inputs/bb_table_rows.csv"), rd("inputs/bb_table_rows_ext.csv"), fill = TRUE)
+bb_cov  <- rbind(rd("inputs/bb_coverage.csv"), rd("inputs/bb_coverage_ext.csv"), fill = TRUE)
+bb_plug <- rd("aggregates/bb_plugin_cells.csv")
+bb_sum  <- rd("simulations/figS2_summary.csv")
+supp    <- read_result("simulations/supplement_numbers.json")
+```
+```
+
+# Summary
+
+```{r key-numbers}
+# Headline numbers, computed directly from the cached outputs (each is recomputed in its own section below).
+Rc_k   <- lvl(confirm_c, "05")
+k_conf <- lapply(c("S", "P"), function(des) worst(Rc_k, "tstd", Rc_k$design == des))
+k_pw   <- rates(power[design == "P"], "cond"); setkey(k_pw, cond)
+k_pwS  <- rates(power[design == "S"], "cond")
+k_real <- nullsum[study == "oneil" & column == "p_tstd" & abs(level - 0.05) < 1e-12]
+clr <- function(col, m, rf) { g <- st_null_c[share == "shared" & m_s == m & ref == rf]; cl_counts(g[[col]], g$n)[["p"]] }
+k_om <- sapply(c(1, 4, 8), function(m) clr("k_t1", m, "R0"))
+k_ex <- clr("k_t1", Inf, "R0")
+k_rd <- sapply(c(1, 4, 8), function(m) clr("k_t1", m, "R1"))
+k_e80  <- function(des, I_) g_e80[design == des & noise == "oneil" & pattern == "broad" & test == "tstd" &
+                                    abs(alpha - 0.05) < 1e-12 & g_e80$I == I_]$mean_eta80
+key <- data.frame(
+  Quantity = c("Worst exact-Bliss rejection rate of the SIR statistic at level 0.05, re-estimated on 20,000 datasets: design S",
+               "Same, design P",
+               "Real O'Neil residuals at exact Bliss, level 0.05 (22,422 stacks)",
+               sprintf("Reference without the single-agent noise component, m_s = 1, 4, 8 (exact curves: %s)", hu(k_ex)),
+               "Reference redrawing the single-agent curves, m_s = 1, 4, 8",
+               "Power, design P, single top-corner cell: SIR statistic / region scan / mean test",
+               "Mean excess for 80% power, broad synergy, design S, 4x4 to 10x10",
+               "Mean excess for 80% power, broad synergy, design P, 4x4 to 10x10"),
+  Value = c(ci_txt(k_conf[[1]]$rate, k_conf[[1]]$lo, k_conf[[1]]$hi, 4), ci_txt(k_conf[[2]]$rate, k_conf[[2]]$lo, k_conf[[2]]$hi, 4),
+            hu(k_real$rate, 4), paste(hu(k_om), collapse = ", "), paste(hu(k_rd), collapse = ", "),
+            sprintf("%s / %s / %s", hu(k_pw["syn_corner_1.00"]$tstd), hu(k_pw["syn_corner_1.00"]$scan), hu(k_pw["syn_corner_1.00"]$mean)),
+            sprintf("%s to %s", hu(k_e80("S", 4)), hu(k_e80("S", 10))), sprintf("%s to %s", hu(k_e80("P", 4)), hu(k_e80("P", 10)))))
+tbl(key, row.names = FALSE)
+```
+
+**Bottom line.** When the reference plates reproduce the noise of the plate, the SIR test holds its level: the worst exact-Bliss rejection rate at nominal 0.05 is `r hu(k_conf[[1]]$rate, 4)` in design S and `r hu(k_conf[[2]]$rate, 4)` in design P, and `r hu(k_real$rate, 4)` on real O'Neil residuals. Leaving the single-agent noise out of the reference raises the rate to `r hu(k_om[1])`, `r hu(k_om[2])` and `r hu(k_om[3])` for curves averaged over 1, 4 and 8 replicates, so the reference, not the statistic, is what decides whether the test is calibrated.
+
+Power depends on the shape of the synergy and on the design. In design P the SIR statistic and the region scan both detect a single synergistic top-corner cell with probability `r hu(k_pw["syn_corner_1.00"]$tstd, 2)` and `r hu(k_pw["syn_corner_1.00"]$scan, 2)` (the mean test, `r hu(k_pw["syn_corner_1.00"]$mean, 2)`), while in design S the noisy single agents limit every test, and the mean excess needed for 80% power on broad synergy falls only from `r hu(k_e80("S", 4))` ($4\times4$) to `r hu(k_e80("S", 10))` ($10\times10$), against `r hu(k_e80("P", 4))` to `r hu(k_e80("P", 10))` in design P. The Berger-Boos search keeps its level but loses much of the power at small replicate counts (Section 8), so we use it only as a sensitivity analysis.
+
+# The question
+
+## Background
+
+A drug combination is called synergistic when the two drugs together kill more cells than their individual effects predict. The prediction needs a reference. We use Bliss independence on mean viability: if drug A alone leaves a fraction $a$ of cells alive and drug B alone leaves a fraction $b$, independent action leaves $ab$ alive under the combination. A combination well with mean viability below $ab$ is synergistic at that dose pair, and a well above $ab$ is antagonistic.
+
+A screen does not measure means. It measures noisy wells on a dose grid, typically $4\times4$ or $5\times5$ doses per drug including the zero dose, and the noise is large compared with the effects that matter (a standard deviation near 0.08 viability units on the plates we study). A statistical test therefore has to answer two questions about the data in hand. First, if there is no synergy anywhere on the grid, how often does the test still claim it (its size, or null rejection rate)? Second, if there is synergy of a given shape and size, how often does the test find it (its power)?
+
+> **Question.** Does the SIR test hold its nominal level when no cell of the grid is synergistic, under the noise structures we meet in practice, and how much synergy, on which grid, does it need to reach 80% power?
+
+## Why it is hard
+
+* The null hypothesis is composite. "No synergy in any cell" allows every surface that lies on or above the Bliss surface, including strongly antagonistic ones, together with any single-agent curves. A level guarantee must hold over all of them at once.
+* The single agents are themselves measured with noise and enter every Bliss prediction $a_ib_j$. An error in a single-agent well moves a whole row or column of predictions in the same direction, so cell-level errors are strongly dependent.
+* The reference distribution of the test statistic is generated by simulating plates at exact Bliss, and the simulation needs a noise model. If the model omits a source of variation that the real plate carries, the test is miscalibrated, and the size of the error depends on which component is missing.
+* Power depends on the shape of the synergy: a broad shift of many cells, a block at high doses, a saturating pattern, or a single corner cell. No single test is best for all of them.
+
+# The method and the math
+
+## The statistic
+
+Index doses of drug A by $i=0,\dots,I-1$ and of drug B by $j=0,\dots,J-1$, with index 0 for the zero dose. Write $\mu_{ij}=\mathbb{E}\,Y_{ij}$ for the mean viability surface (control normalized to $\mu_{00}=1$), $a_i=\mu_{i0}$ and $b_j=\mu_{0j}$ for the single-agent curves, and $r=(I-1)(J-1)$ for the number of combination cells. Bliss independence on mean viability is
+
+$$\mu_{ij}=a_i\,b_j\qquad (i,j\ge 1),$$
+
+and the Bliss excess is $\eta_{ij}=a_ib_j-\mu_{ij}$, positive for synergy. The primary null hypothesis is that no cell is synergistic, $H_0^{\mathrm{any}}:\ \eta_{ij}\le 0$ for all $i,j\ge1$.
+
+Two fits make up the statistic. The single-agent curves are fitted by one-dimensional nonincreasing (isotonic) regression of the single-agent wells, $\hat a=\mathrm{Iso}(Y_{10},\dots,Y_{I-1,0})$ and $\hat b=\mathrm{Iso}(Y_{01},\dots,Y_{0,J-1})$. The surface is fitted by two-dimensional isotonic regression of all wells, $\hat\mu=\arg\min_{\theta\in\mathcal M}\sum_{ij}(Y_{ij}-\theta_{ij})^2$, where $\mathcal M$ is the set of surfaces nonincreasing in each dose. The estimated excess is $\hat\eta_{ij}=\hat a_i\hat b_j-\hat\mu_{ij}$, and the SIR statistic is the standardized positive-part excess
+
+$$T_{\mathrm{SIR}}=\sum_{i,j\ge1}\left(\frac{\hat a_i\hat b_j-\hat\mu_{ij}}{s(\hat a_i\hat b_j)}\right)_+^{2},$$
+
+where $s(m)$ is the noise standard deviation of a combination well whose mean viability is $m$. (In the R package the statistic is the field `t_std`.) Cells where the data sit below the Bliss prediction contribute nothing, and cells far above it contribute quadratically, so the statistic reacts to a few strong cells or to many mild ones.
+
+**Worked example.** The chunk below generates one $5\times5$ plate whose upper-right $3\times3$ block is shifted down by 0.10 (synergy), fits it, and recomputes $T_{\mathrm{SIR}}$ by hand from the fitted single-agent curves and fitted surface. With a constant noise SD of 0.08, $s\equiv0.08$.
+
+```{r worked-example}
+set.seed(11)
+doses <- c(0, 0.1, 0.3, 1, 3)
+a_true <- c(1, 0.95, 0.80, 0.55, 0.30)
+b_true <- c(1, 0.90, 0.70, 0.45, 0.25)
+mu_syn <- outer(a_true, b_true)
+mu_syn[3:5, 3:5] <- mu_syn[3:5, 3:5] - 0.10          # synergy in the high-dose block
+Y_ex <- mu_syn + matrix(rnorm(25, sd = 0.08), 5)
+Y_ex[1, 1] <- 1
+noise_ex <- sir_noise_parametric(sd = 0.08)
+fit_ex <- sir_fit(Y_ex, doses = list(doses, doses), design = "S", noise = noise_ex,
+                  B = 399L, seed = 5, two_stage = FALSE)
+
+eta_hat <- outer(fit_ex$a_hat, fit_ex$b_hat) - fit_ex$fitted_surface[2:5, 2:5]
+T_by_hand <- sum(pmax(eta_hat / 0.08, 0)^2)
+tbl(data.frame(
+  quantity = c("T_SIR recomputed from fitted curves and surface", "t_std reported by sir_fit",
+               "plug-in p-value (399 reference plates)", "region-scan p-value"),
+  value = c(T_by_hand, fit_ex$t_std, fit_ex$p_tstd, fit_ex$p_scan)), digits = 4)
+round(eta_hat, 3)
+```
+
+The matrix printed above is $\hat\eta$ on the four-by-four block of combination cells. Its positive entries sit in the lower-right corner, where we placed the synergy, and the sum of their squared standardized values is the statistic.
+
+## The plug-in reference distribution
+
+The p-value is $p=\{1+\#(T^\ast_b\ge T_{\mathrm{SIR}})\}/(B+1)$, where each of $B$ reference plates $T^\ast_b$ is drawn at exact Bliss, with mean surface $\hat a_i\hat b_j$ and the assumed noise, and analyzed with the same pipeline. The plug-in step is the substitution of the fitted curves $\hat a,\hat b$ and the estimated noise parameters for the unknown truth.
+
+## Why exact Bliss is the hardest null
+
+The reason for simulating at exact Bliss, rather than at some other null surface, is a coupling argument. Suppose the observation model is monotone: the single-agent wells depend on $(a,b)$ and a noise element $\xi$ only, and each combination well is $Y_{ij}=G_{ij}(\mu_{ij},\xi)$ with $G_{ij}$ nondecreasing in its mean. Additive noise with any joint law (heavy tails, skew, correlation, plate shifts), multiplicative noise, nondecreasing transformations and floors all qualify. Fix a null surface $\mu$ with $\mu_{ij}\ge a_ib_j$, and use the same noise $\xi$ for the null surface and for the Bliss surface $\mu^B_{ij}=a_ib_j$. Then every combination well under $\mu$ is at least as large as under $\mu^B$, and the single-agent wells are identical. Because the isotonic projection preserves order and the single-agent fits read only the single-agent wells, the fitted excess can only shrink, and so can any statistic that is nondecreasing in the excess, including $T_{\mathrm{SIR}}$:
+
+$$T_{\mathrm{SIR}}\big(Y(\mu,\xi)\big)\;\le\;T_{\mathrm{SIR}}\big(Y(\mu^B,\xi)\big)\quad\text{for every }\xi,\ \mu\in H_0(a,b).$$
+
+Consequently the p-value computed against the exact-Bliss law is valid at every null surface: antagonism can only make the test more conservative. The result also covers replicate summaries. If each well is summarized from $m$ replicate plates by a function that is nondecreasing in each replicate (the mean, the median, a trimmed mean, a mean over an exclusion mask fixed in advance), the summarized data satisfy the same monotone model and the argument applies unchanged. It does not cover a data-dependent outlier screen, whose level is measured by simulation instead.
+
+**A numerical illustration.** The chunk below draws 200 noise matrices, builds from each the plate at exact Bliss and the plate with a nonnegative random antagonistic shift added to the combination cells, with the single agents untouched, and compares the two statistics draw by draw.
+
+```{r coupling-demo}
+set.seed(2026)
+mu_bliss <- outer(a_true, b_true)
+t_std_of <- function(Y) sir_fit(Y, design = "S", noise = noise_ex, B = 19L, two_stage = FALSE, seed = 1L)$t_std
+coupled <- t(replicate(200, {
+  e <- matrix(rnorm(25, sd = 0.08), 5)
+  delta <- matrix(0, 5, 5); delta[2:5, 2:5] <- runif(16, 0, 0.15)   # antagonism: mean above Bliss
+  Yb <- mu_bliss + e;          Yb[1, 1] <- 1
+  Ya <- mu_bliss + delta + e;  Ya[1, 1] <- 1
+  c(bliss = t_std_of(Yb), antagonistic = t_std_of(Ya))
+}))
+coupling <- data.frame(draws = nrow(coupled),
+                       draws_with_smaller_T_under_antagonism = sum(coupled[, "antagonistic"] <= coupled[, "bliss"] + 1e-9),
+                       largest_increase = max(coupled[, "antagonistic"] - coupled[, "bliss"]),
+                       mean_T_bliss = mean(coupled[, "bliss"]),
+                       mean_T_antagonistic = mean(coupled[, "antagonistic"]))
+tbl(coupling, digits = 3)
+```
+
+In `r coupling$draws_with_smaller_T_under_antagonism` of `r coupling$draws` draws the statistic under antagonism is no larger than under exact Bliss, and the largest change (antagonistic minus Bliss) over the 200 draws is `r f3(coupling$largest_increase)`, so the statistic never increased. Averaged over the draws the statistic falls from `r f3(coupling$mean_T_bliss, 1)` at exact Bliss to `r f3(coupling$mean_T_antagonistic, 1)` under antagonism. This is the inequality of the coupling argument seen draw by draw, with the single agents held fixed; it illustrates the argument and is not a proof.
+
+## Why the plug-in bootstrap is approximate
+
+The coupling result is exact at the true single-agent curves and the true noise law. The bootstrap used in practice substitutes estimates for both. The fitted single-agent curves $\hat a,\hat b$ carry the noise of the single-agent wells, and the noise law (its SD curve, its tail shape, the plate-shift variance, the replicate structure) is estimated from other data. The resulting p-value has no exact guarantee, and the supremum over the unknown parameters is not available in closed form: the null law of $T_{\mathrm{SIR}}$ is not monotone in the single-agent curves, so no extreme parameter value is the worst case. We therefore check the calibration directly by simulation, over noise laws, single-agent surfaces and grids, and in noise taken from real plates. Sections 5 to 8 report those checks.
+
+## Designs S, R and P
+
+The three designs differ in where the single-agent information comes from, and this changes what the reference plates must redraw.
+
+* **Design S** (single agents on the combination plate). The single-agent wells are measured alongside the combination wells, as in the NCI ALMANAC. Every reference plate redraws the single-agent wells and refits $\hat a,\hat b$, so the reference carries the single-agent uncertainty automatically.
+* **Design R** (replicated plates). Several replicate plates each carry the single agents; the analyzed value at a well is a nondecreasing summary of the replicates, usually the mean, and the reference averages the same number of independent draws. In the package, design S with replicates is relabeled R.
+* **Design P** (single agents from an external reference). The first row and column are reported curves, such as the O'Neil single-agent curves, treated as fixed values or as the mean of $m_s$ replicate curves. With $m_s=\infty$ (the default `sa_replicates = Inf`) the reported values are held fixed and the null becomes "no synergy relative to the reported curves"; with finite $m_s$ every reference plate redraws both curves as the mean of $m_s$ noisy curves.
+
+## What the reference must contain
+
+A reference plate must reproduce every noise component that the analyzed matrix carries relative to its own Bliss prediction:
+
+1. the single-agent uncertainty (redrawn curves in design P, redrawn single-agent wells in design S);
+2. a plate shift $\delta\sim N(0,\tau^2)$ common to the combination wells, relative to the single-agent reference;
+3. the replicate structure, so that a mean of four plates is referred to a mean of four independent plates and not to one plate with the same variance;
+4. the noise law of the wells: SD curve and tails.
+
+Omitting a component makes the reference too tight, because the real plate varies more than the plates it is compared with, and the test rejects too often. Section 6 measures this one component at a time.
+
+## Berger-Boos sensitivity analysis
+
+A Berger-Boos version of the test replaces the plug-in by a guarantee that does not rely on the estimates. Build a confidence set $C_\beta$ for the single-agent curves and noise parameters $\nu$ from the single-agent wells and external information only, with coverage at least $1-\beta$, and set
+
+$$p_{\mathrm{BB}}=\min\Big\{1,\ \sup_{\nu\in C_\beta}p_\nu\big(T_{\mathrm{SIR}}^{\mathrm{obs}}\big)+\beta\Big\}.$$
+
+Then $P(p_{\mathrm{BB}}\le\alpha)\le\alpha$ at every null surface, because either the truth is outside $C_\beta$ (probability at most $\beta$) or the exact-Bliss p-value at the truth is at most $\alpha-\beta$. The guarantee needs the supremum exactly. Since the null law is not monotone in the curves, we search for it (484 candidate curve pairs plus coordinate ascent), which gives a lower bound on the supremum; the resulting p-value is empirically conservative, and we use it as a sensitivity analysis rather than as the main test.
+
+# The data
+
+All inputs are cached outputs of the pipeline; nothing in this notebook reruns a Monte Carlo study.
+
+All inputs are cached outputs of the pipeline, read through `read_result()`: from `../output` when the pipeline has been run, and otherwise from the copies shipped in `data/`. Nothing in this notebook reruns a Monte Carlo study. The raw draws of the head-to-head, stress and Berger-Boos studies hold millions of rows, so the notebook reads count tables (rejections out of datasets per simulation cell) that `data/make_aggregates.py` collapses from them.
+
+```{r data-overview}
+dims <- function(name, d, what) data.frame(table = name, rows = nrow(d), columns = ncol(d), content = what)
+tbl(rbind(
+  dims("h2h_size_cells", size_c, "exact-Bliss and antagonistic cells, matched and misspecified reference: rejections at 0.05 and 0.01"),
+  dims("h2h_confirm_cells", confirm_c, "20,000-dataset re-estimates of the worst cell per design"),
+  dims("h2h_power", power, "power by synergy pattern, design S and P (one row per dataset)"),
+  dims("h2h_realpower_cells", rp_cells, "synergy added to real O'Neil and ALMANAC noise"),
+  dims("null_summary.csv", nullsum, "real-noise null rates with Wilson intervals"),
+  dims("stress_null_cells", st_null_c, "reference-component study: all-null cell lines, counts per cell line"),
+  dims("stress_shared_null_family", st_fam, "BH calls per all-null cell line"),
+  dims("stress_mixed_cells", st_mixed_c, "mixed cell lines: counts per pattern"),
+  dims("stress_shift_cells", st_shift_c, "plate-shift study"),
+  dims("stress_reps", st_reps, "replicate-structure study (one row per matrix)"),
+  dims("grid_counts", g_cnt, "grid study: rejection counts by amplitude"),
+  dims("grid_effect80", g_e80, "effect needed for 80% power"),
+  dims("grid_size", g_size, "grid study: null rates"),
+  dims("bb_plugin_cells", bb_plug, "plug-in bootstrap in the Berger-Boos settings")))
+```
+
+Missing values and design of the main grids.
+
+```{r data-quality}
+tbl(data.frame(table = c("h2h_power", "h2h_power", "h2h_power"), column = c("p_tstd", "p_scan", "p_mean"),
+               n_missing = c(sum(is.na(power$p_tstd)), sum(is.na(power$p_scan)), sum(is.na(power$p_mean)))), row.names = FALSE)
+cells <- size_c[ref == "matched"]
+cells[, kind := ifelse(cond == "null", "exact Bliss", "antagonistic")]
+tbl(cells[, .(cells = .N, datasets_per_cell = paste(sort(unique(n)), collapse = ", ")),
+          by = .(design, kind)][order(design, kind)], row.names = FALSE)
+```
+
+Every exact-Bliss cell has 2,000 datasets, and each design has 40 exact-Bliss cells (four noise laws, five single-agent surfaces, two grids) and 256 antagonistic cells (32 surfaces per law and grid), as in the study design.
+
+# Figure 3 and Tables S1 to S3: size and power of the three tests
+
+## Rationale
+
+Figure 3 compares the SIR statistic with two companions run on the same data: the region scan, which asks whether synergy is present in a fixed family of regions (the high-dose rectangles and all $2\times2$ blocks), and the mean test, which tests the weaker null "no synergy on average". We expect the SIR statistic and the scan to hold level at exact Bliss when the reference matches the noise (the least-favorable-null result), the mean test to hold level too, and the three tests to have different strengths: the mean test for broad shifts, the scan for a single corner cell, the SIR statistic for block and saturating patterns. Panel D replaces simulated noise by real residuals, which is the stringent check for the screens in the companion analyses.
+
+The figure is drawn at the end of this section, after the numbers behind each panel have been computed. It has six panels. **A.** Worst null rejection rate at level 0.05 under a matched noise law, maximum over four noise laws and five single-agent surfaces at exact Bliss, per test, design (S filled, P open) and grid. **B, C.** Power by synergy pattern in design S and P ($5\times5$, O'Neil SD curve). **D.** Null rejection rate divided by the level, in real noise: O'Neil four-block stacks (design P) and ALMANAC plates (design S). **E, F.** Power with synergy added to the same real noise.
+
+## Rebuilding panel A and Table S1
+
+Panel A takes, for each test, the largest null rejection rate over the 20 exact-Bliss cells of each design and grid. Table S1 reports the same maximum for the SIR statistic together with a re-estimate of the maximizing cell on 20,000 fresh datasets (the maximum over many noisy estimates is biased upward, so the re-estimate is the unbiased check), the maximum over antagonistic surfaces, and the level-0.01 maximum.
+
+```{r table-s1}
+m_matched <- size_c[ref == "matched"]
+R05 <- lvl(m_matched, "05")
+R01 <- lvl(m_matched, "01")
+Rc  <- lvl(confirm_c, "05")
+
+s1 <- lapply(c("S", "P"), function(des) {
+  list(null05 = worst(R05, "tstd", R05$design == des & R05$cond == "null"),
+       conf   = worst(Rc,  "tstd", Rc$design == des),
+       ant05  = worst(R05, "tstd", R05$design == des & R05$cond != "null"),
+       null01 = worst(R01, "tstd", R01$design == des & R01$cond == "null"))
+})
+names(s1) <- c("S", "P")
+cell_txt <- function(w, nd = 3) ci_txt(w$rate, w$lo, w$hi, nd)
+s1_rows <- list(
+  c("Exact Bliss, level 0.05, worst cell", cell_txt(s1$S$null05), cell_txt(s1$P$null05)),
+  c("Re-estimate of worst cell (20,000 datasets)", cell_txt(s1$S$conf, 4), cell_txt(s1$P$conf, 4)),
+  c("Antagonistic surfaces, level 0.05, worst", cell_txt(s1$S$ant05), cell_txt(s1$P$ant05)),
+  c("Exact Bliss, level 0.01, worst cell", cell_txt(s1$S$null01), cell_txt(s1$P$null01)))
+s1_df <- as.data.frame(do.call(rbind, s1_rows)); names(s1_df) <- c("", "Design S", "Design P")
+tbl(s1_df, row.names = FALSE)
+cat("Maximizing cells:\n"); print(rbind(S = s1$S$null05$cell, P = s1$P$null05$cell, S_confirm = s1$S$conf$cell, P_confirm = s1$P$conf$cell))
+cat("\nIdentical to tables/tabS1_size.tex:",
+    tex_same(lapply(s1_rows, function(x) x[-1]), "tables/tabS1_size.tex"), "\n")
+
+add_chk("Table S1 / Results: re-estimated worst null rate, design S", 0.0461, s1$S$conf$rate, 4)
+add_chk("Table S1 / Results: re-estimated worst null rate, design P", 0.0532, s1$P$conf$rate, 4)
+add_chk("Results: worst antagonistic rate, design S", 0.040, s1$S$ant05$rate)
+add_chk("Results: worst antagonistic rate, design P", 0.052, s1$P$ant05$rate)
+```
+
+```{r panel-a-numbers}
+wA <- rbindlist(lapply(c("tstd", "scan", "mean"), function(t) {
+  rbindlist(lapply(list(c("S", 5), c("S", 4), c("P", 5), c("P", 4)), function(g) {
+    w <- worst(R05, t, R05$design == g[1] & R05$I == as.integer(g[2]))
+    w[, `:=`(design = g[1], grid = paste0(g[2], "x", g[2]))]
+  }))
+}))
+tbl(wA[, .(test = LAB[test], design, grid, rate = hu(rate, 4), interval = sprintf("[%s, %s]", hu(lo, 4), hu(hi, 4)), cell)],
+    row.names = FALSE)
+```
+
+**What do we see?**
+
+With a reference that matches the noise law, the largest rejection rate of the SIR statistic over the 40 exact-Bliss cells of a design is `r hu(s1$S$null05$rate, 4)` in design S (`r s1$S$null05$cell`) and `r hu(s1$P$null05$rate, 4)` in design P (`r s1$P$null05$cell`); the scan and the mean test fall in the same band, with design-P maxima of `r hu(wA[test == "scan" & design == "P", max(rate)], 4)` and `r hu(wA[test == "mean" & design == "P", max(rate)], 4)`. A maximum over 40 estimates with a standard error near 0.005 is biased upward, so we re-estimated the two maximizing cells on 20,000 fresh datasets: `r cell_txt(s1$S$conf, 4)` in design S and `r cell_txt(s1$P$conf, 4)` in design P. Design S is at or below nominal. Design P is about `r sprintf("%.0f", 100 * (s1$P$conf$rate / 0.05 - 1))`% above nominal, with the interval just clear of 0.05, which is the size of error we expect from a plug-in reference and the reason the paper reports calibration by simulation. Antagonistic surfaces never raised the rate beyond Monte Carlo error (worst `r hu(s1$S$ant05$rate)` in design S and `r hu(s1$P$ant05$rate)` in design P), and at level 0.01 the worst rates were `r hu(s1$S$null01$rate)` and `r hu(s1$P$null01$rate)`. All of these agree with the numbers in the paper (checks at the end of the notebook).
+
+## Misspecified references (Table S2)
+
+The size guarantee needs the reference noise law to match the data. Table S2 repeats the exact-Bliss experiment with the reference law deliberately wrong: Gaussian reference with $t_4$ data, a constant-SD reference (0.08) with data following the O'Neil SD curve, and a constant-CV Gaussian reference with log-normal data.
+
+```{r table-s2}
+R2 <- lvl(size_c[ref == "misspecified" & cond == "null"], "05")
+rows2 <- list(c("D", "Gaussian reference, $t_4$ data"), c("C", "Constant SD 0.08, O'Neil-shaped data"),
+              c("B", "Constant-CV Gaussian reference, log-normal data"))
+s2 <- do.call(rbind, lapply(rows2, function(r) {
+  do.call(rbind, lapply(c("S", "P"), function(des) {
+    msk <- R2$law == r[1] & R2$design == des
+    w <- lapply(c("tstd", "scan", "mean"), function(t) worst(R2, t, msk))
+    data.frame(law = r[1], misspecification = r[2], design = des,
+               tstd = w[[1]]$rate, scan = w[[2]]$rate, mean = w[[3]]$rate)
+  }))
+}))
+s2_show <- data.frame(Misspecification = s2$misspecification, Design = s2$design,
+                      `SIR statistic` = hu(s2$tstd), `Region scan` = hu(s2$scan), `Mean test` = hu(s2$mean),
+                      check.names = FALSE)
+tbl(s2_show, row.names = FALSE)
+s2_cells <- lapply(seq_len(nrow(s2)), function(i) c(s2$design[i], hu(s2$tstd[i]), hu(s2$scan[i]), hu(s2$mean[i])))
+cat("Identical to tables/tabS2_misspec.tex:", tex_same(s2_cells, "tables/tabS2_misspec.tex"), "\n")
+cat("Cells per row:", paste(unique(R2[, .N, by = .(law, design)]$N), collapse = ", "),
+    "; datasets per cell:", paste(unique(R2$n), collapse = ", "), "\n")
+
+add_chk("Table S2: constant-SD reference on O'Neil-shaped data, design S", 0.156, s2[s2$law == "C" & s2$design == "S", "tstd"])
+add_chk("Table S2: constant-SD reference on O'Neil-shaped data, design P", 0.202, s2[s2$law == "C" & s2$design == "P", "tstd"])
+add_chk("Table S2: Gaussian reference on t4 data, design S", 0.042, s2[s2$law == "D" & s2$design == "S", "tstd"])
+add_chk("Table S2: Gaussian reference on t4 data, design P", 0.071, s2[s2$law == "D" & s2$design == "P", "tstd"])
+```
+
+**What do we see?**
+
+A reference with the wrong SD curve is the damaging case. A constant SD of 0.08 on data that follow the O'Neil SD curve raises the rate of the SIR statistic to `r hu(s2[s2$law == "C" & s2$design == "S", "tstd"])` in design S and `r hu(s2[s2$law == "C" & s2$design == "P", "tstd"])` in design P (the scan: `r hu(s2[s2$law == "C" & s2$design == "S", "scan"])` and `r hu(s2[s2$law == "C" & s2$design == "P", "scan"])`), `r sprintf("%.1f", s2[s2$law == "C" & s2$design == "S", "tstd"] / 0.05)` and `r sprintf("%.1f", s2[s2$law == "C" & s2$design == "P", "tstd"] / 0.05)` times nominal for the SIR statistic. The mean test is not affected (`r hu(s2[s2$law == "C" & s2$design == "S", "mean"])` and `r hu(s2[s2$law == "C" & s2$design == "P", "mean"])`) because it estimates its variance from the plate and does not use the reference law. The other two mismatches are milder: a Gaussian reference on $t_4$ data gives `r hu(s2[s2$law == "D" & s2$design == "S", "tstd"])` and `r hu(s2[s2$law == "D" & s2$design == "P", "tstd"])` for the SIR statistic, and a constant-CV Gaussian reference on log-normal data gives `r hu(s2[s2$law == "B" & s2$design == "S", "tstd"])` and `r hu(s2[s2$law == "B" & s2$design == "P", "tstd"])`. Tail shape matters much less than the SD curve, so the noise model has to be estimated from replicate data of the assay (`sir_sd_from_replicates()`, `sir_noise_bank()`).
+
+## Power by synergy pattern (Figure 3B and C, Table S3)
+
+Power is the rejection rate at level 0.05 with synergy added to the interior. The patterns are a broad shift (all cells), a high-dose block, a single top-corner cell, a middle bump, a low-dose block, saturating synergy (the kill rate grows with the Bliss-expected kill) and a zero-net pattern that mixes synergy and antagonism so that the mean excess is zero. Amplitudes are the middle amplitude of the study, and the mean and maximum excess are reported in parentheses.
+
+```{r table-s3}
+Rp <- lapply(c(S = "S", P = "P"), function(d) { R <- rates(power[design == d], "cond"); setkey(R, cond); R })
+pats <- list(c("syn_broad_0.20", "Broad 0.20"), c("syn_hdblock_0.80", "High-dose block 0.80"),
+             c("syn_corner_1.00", "Top corner 1.00"), c("syn_bump_0.30", "Middle bump 0.30"),
+             c("syn_lowdose_0.10", "Low dose 0.10"), c("sat_0.60", "Saturating 0.60"), c("mixed_0.60", "Zero net 0.60"))
+s3_rows <- lapply(pats, function(p) {
+  s <- Rp$S[p[1]]; q <- Rp$P[p[1]]
+  em <- if (abs(s$eff_mean) < 5e-4) abs(s$eff_mean) else s$eff_mean
+  c(sprintf("%s (%s, %s)", p[2], hu(em), hu(s$eff_max)),
+    hu(s$tstd), hu(s$scan), hu(s$mean), hu(q$tstd), hu(q$scan), hu(q$mean))
+})
+s3_df <- as.data.frame(do.call(rbind, s3_rows))
+names(s3_df) <- c("Pattern (mean, max excess)", "S: SIR", "S: scan", "S: mean", "P: SIR", "P: scan", "P: mean")
+tbl(s3_df, row.names = FALSE)
+cat("Datasets per entry:", paste(unique(c(Rp$S$n, Rp$P$n)), collapse = ", "), "\n")
+cat("Identical to tables/tabS3_power.tex:", tex_same(s3_rows, "tables/tabS3_power.tex"), "\n")
+
+pP <- Rp$P; pS <- Rp$S
+add_chk("Results: design P, top corner, SIR statistic", 0.907, pP["syn_corner_1.00"]$tstd)
+add_chk("Results: design P, top corner, scan", 0.913, pP["syn_corner_1.00"]$scan)
+add_chk("Results: design P, top corner, mean test", 0.107, pP["syn_corner_1.00"]$mean)
+add_chk("Results: design P, high-dose block, SIR statistic", 0.978, pP["syn_hdblock_0.80"]$tstd)
+add_chk("Results: design P, high-dose block, scan", 0.992, pP["syn_hdblock_0.80"]$scan)
+add_chk("Results: design P, high-dose block, mean test", 0.244, pP["syn_hdblock_0.80"]$mean)
+add_chk("Results: design P, broad, mean test", 0.972, pP["syn_broad_0.20"]$mean)
+add_chk("Results: design P, broad, SIR statistic", 0.932, pP["syn_broad_0.20"]$tstd)
+add_chk("Results: design P, broad, scan", 0.907, pP["syn_broad_0.20"]$scan)
+add_chk("Results: design P, zero net, SIR statistic", 0.998, pP["mixed_0.60"]$tstd)
+add_chk("Results: design P, zero net, scan", 0.999, pP["mixed_0.60"]$scan)
+add_chk("Results: design P, zero net, mean test (size)", 0.003, pP["mixed_0.60"]$mean)
+add_chk("Results: design S, broad, SIR statistic", 0.404, pS["syn_broad_0.20"]$tstd)
+add_chk("Results: design S, saturating, SIR statistic", 0.997, pS["sat_0.60"]$tstd)
+```
+
+**What do we see?**
+
+Power follows the shape of the synergy, and no test dominates. In design P ($5\times5$, the O'Neil SD curve) the SIR statistic and the scan detect a single top-corner cell with probability `r hu(pP["syn_corner_1.00"]$tstd)` and `r hu(pP["syn_corner_1.00"]$scan)`, against `r hu(pP["syn_corner_1.00"]$mean)` for the mean test; for a high-dose block the three reach `r hu(pP["syn_hdblock_0.80"]$tstd)`, `r hu(pP["syn_hdblock_0.80"]$scan)` and `r hu(pP["syn_hdblock_0.80"]$mean)`. For broad synergy the mean test is strongest (`r hu(pP["syn_broad_0.20"]$mean)` against `r hu(pP["syn_broad_0.20"]$tstd)` and `r hu(pP["syn_broad_0.20"]$scan)`), and for the middle bump it is again ahead (`r hu(pP["syn_bump_0.30"]$mean)` against `r hu(pP["syn_bump_0.30"]$tstd)`). The low-dose block is hard for all three (at most `r hu(max(pP["syn_lowdose_0.10"]$tstd, pP["syn_lowdose_0.10"]$scan, pP["syn_lowdose_0.10"]$mean))`). The zero-net pattern has mean excess zero by construction: the SIR statistic and the scan detect it (`r hu(pP["mixed_0.60"]$tstd)` and `r hu(pP["mixed_0.60"]$scan)`), while the mean test's entry of `r hu(pP["mixed_0.60"]$mean)` is a size, since that pattern lies on the boundary of its null (marked with an asterisk in panels B and C).
+
+In design S, where the single agents are measured with the same noise as the combination wells, every power drops: the SIR statistic is the most powerful of the three for broad synergy (`r hu(pS["syn_broad_0.20"]$tstd)`) and saturating synergy (`r hu(pS["sat_0.60"]$tstd)`), the scan wins for the top corner (`r hu(pS["syn_corner_1.00"]$scan)` against `r hu(pS["syn_corner_1.00"]$tstd)`), and the high-dose block is detected by the SIR statistic in only `r hu(pS["syn_hdblock_0.80"]$tstd)` of datasets. We report the SIR statistic and the mean test side by side and do not combine them into one claim.
+
+## Real noise: Figure 3D to F
+
+The simulated laws above are assumptions. Panels D to F use residuals from real plates. Panel D takes O'Neil four-block stacks (22,422) and ALMANAC plates (6,124), replaces the means by exact Bliss surfaces so that the null is true by construction, adds the real residuals, and runs the production pipeline (two-stage Monte Carlo, noise bank reference). Panels E and F add synergy before the noise.
+
+```{r real-null}
+sel <- copy(nullsum)[column %in% c("p_tstd", "p_scan", "p_companion") & level %in% c(0.05, 0.01, 0.005)]
+sel[, `:=`(test = c(p_tstd = "SIR statistic", p_scan = "Region scan", p_companion = "Companion mean test")[column],
+           rate_txt = hu(rate, 4), interval = sprintf("[%s, %s]", hu(lo, 4), hu(hi, 4)),
+           ratio = sprintf("%.2f", ratio_to_nominal))]
+tbl(sel[order(-study, match(column, c("p_tstd", "p_scan", "p_companion")), -level),
+        .(study, test, level, units = n, rate = rate_txt, interval, `rate / level` = ratio)], row.names = FALSE)
+
+
+getn <- function(s, col, a) nullsum[nullsum$study == s & nullsum$column == col & abs(nullsum$level - a) < 1e-12]
+add_chk("Abstract/Results: real O'Neil null rate at 0.05, SIR statistic", 0.0481, getn("oneil", "p_tstd", 0.05)$rate, 4)
+add_chk("Results: real O'Neil null rate at 0.01, SIR statistic", 0.0121, getn("oneil", "p_tstd", 0.01)$rate, 4)
+add_chk("Results: real O'Neil null rate at 0.005, SIR statistic", 0.0059, getn("oneil", "p_tstd", 0.005)$rate, 4)
+add_chk("Results: real O'Neil null rate at 0.05, block-level t", 0.0424, getn("oneil", "p_companion", 0.05)$rate, 4)
+add_chk("Results: real O'Neil null rate at 0.01, block-level t", 0.0075, getn("oneil", "p_companion", 0.01)$rate, 4)
+add_chk("Results: real O'Neil null rate at 0.005, block-level t", 0.0039, getn("oneil", "p_companion", 0.005)$rate, 4)
+add_chk("Results: ALMANAC null rate at 0.05, SIR statistic", 0.0395, getn("almanac", "p_tstd", 0.05)$rate, 4)
+add_chk("Results: ALMANAC null rate at 0.01, SIR statistic", 0.0171, getn("almanac", "p_tstd", 0.01)$rate, 4)
+add_chk("Results: ALMANAC null rate at 0.005, SIR statistic", 0.0132, getn("almanac", "p_tstd", 0.005)$rate, 4)
+add_chk("Results: ALMANAC null rate / 0.01 (paper: 1.7 times nominal)", 1.7, getn("almanac", "p_tstd", 0.01)$ratio_to_nominal, 1)
+add_chk("Results: ALMANAC null rate / 0.005 (paper: 2.6 times nominal)", 2.6, getn("almanac", "p_tstd", 0.005)$ratio_to_nominal, 1)
+```
+
+```{r real-power}
+rpw <- copy(rp_cells)
+rpw[, `:=`(study = c(oneil = "O'Neil (design P)", almanac = "ALMANAC (design S)")[study],
+           tstd = k_tstd / n, scan = k_scan / n, companion = k_companion / n, k = k_tstd)]
+rpw[, `:=`(lo = wilson(k, n)[, "lo"], hi = wilson(k, n)[, "hi"])]
+tbl(rpw[, .(study, pattern = cond, plates = n, `mean excess` = hu(eff_mean), `SIR statistic` = hu(tstd, 4),
+            `95% interval` = sprintf("[%s, %s]", hu(lo, 4), hu(hi, 4)), `region scan` = hu(scan, 4),
+            `companion mean test` = hu(companion, 4))], row.names = FALSE)
+
+gp <- function(d, s, cc) d[study == s & cond == cc]
+add_chk("Results: O'Neil broad synergy power, SIR statistic", 0.843, gp(rpw, "O'Neil (design P)", "syn_broad_0.05")$tstd)
+add_chk("Results: O'Neil broad synergy mean excess", 0.046, gp(rpw, "O'Neil (design P)", "syn_broad_0.05")$eff_mean)
+add_chk("Results: O'Neil broad synergy power, block-level t", 0.772, gp(rpw, "O'Neil (design P)", "syn_broad_0.05")$companion)
+add_chk("Results: ALMANAC broad synergy power, SIR statistic", 0.531, gp(rpw, "ALMANAC (design S)", "syn_broad_0.10")$tstd)
+add_chk("Results: ALMANAC broad synergy mean excess", 0.098, gp(rpw, "ALMANAC (design S)", "syn_broad_0.10")$eff_mean)
+```
+
+**What do we see?**
+
+On O'Neil residuals (design P) the SIR statistic rejects `r hu(getn("oneil", "p_tstd", 0.05)$rate, 4)` at level 0.05, `r hu(getn("oneil", "p_tstd", 0.01)$rate, 4)` at 0.01 and `r hu(getn("oneil", "p_tstd", 0.005)$rate, 4)` at 0.005, which is `r f3(getn("oneil", "p_tstd", 0.05)$ratio_to_nominal, 2)`, `r f3(getn("oneil", "p_tstd", 0.01)$ratio_to_nominal, 2)` and `r f3(getn("oneil", "p_tstd", 0.005)$ratio_to_nominal, 2)` times nominal; the block-level $t$ test is conservative at all three levels (`r hu(getn("oneil", "p_companion", 0.05)$rate, 4)`, `r hu(getn("oneil", "p_companion", 0.01)$rate, 4)`, `r hu(getn("oneil", "p_companion", 0.005)$rate, 4)`). On ALMANAC plate differences (design S) the rate is below nominal at 0.05 (`r hu(getn("almanac", "p_tstd", 0.05)$rate, 4)`) but `r f3(getn("almanac", "p_tstd", 0.01)$ratio_to_nominal, 2)` and `r f3(getn("almanac", "p_tstd", 0.005)$ratio_to_nominal, 2)` times nominal at 0.01 and 0.005, and the V2Sp mean test is liberal at 0.05 (`r hu(getn("almanac", "p_companion", 0.05)$rate, 4)`). Single ALMANAC plates are therefore claimed at level 0.05 only, where the SIR statistic is conservative. In the real-noise power study (panels E and F) the SIR statistic detects broad synergy of mean excess `r hu(gp(rpw, "O'Neil (design P)", "syn_broad_0.05")$eff_mean)` in `r hu(gp(rpw, "O'Neil (design P)", "syn_broad_0.05")$tstd)` of O'Neil stacks (block-level $t$: `r hu(gp(rpw, "O'Neil (design P)", "syn_broad_0.05")$companion)`), high-dose synergy in `r hu(gp(rpw, "O'Neil (design P)", "syn_highdose_0.10")$tstd)` (block-level $t$: `r hu(gp(rpw, "O'Neil (design P)", "syn_highdose_0.10")$companion)`) and saturating synergy in `r hu(gp(rpw, "O'Neil (design P)", "sat_0.5")$tstd)`. On ALMANAC the same patterns are much harder: broad synergy of mean excess `r hu(gp(rpw, "ALMANAC (design S)", "syn_broad_0.10")$eff_mean)` is detected in `r hu(gp(rpw, "ALMANAC (design S)", "syn_broad_0.10")$tstd)` of plates, and at half the amplitude (`r hu(gp(rpw, "ALMANAC (design S)", "syn_broad_0.05")$eff_mean)`) in only `r hu(gp(rpw, "ALMANAC (design S)", "syn_broad_0.05")$tstd)`. The companion in panel D is the block-level $t$ test for O'Neil and V2Sp for ALMANAC.
+
+## Figure 3 redrawn
+
+```{r fig3-draw, fig.height=8.5, fig.cap="Main Figure 3, redrawn in R from the tables above."}
+bar_theme <- theme(axis.text.x = element_text(angle = 35, hjust = 1), legend.position = "none")
+wA[, test := factor(test, levels = c("tstd", "scan", "mean"))]
+pA <- ggplot(wA, aes(test, rate, color = test, shape = grid, fill = design)) +
+  geom_hline(yintercept = 0.05, linetype = 2, color = "grey40") +
+  geom_pointrange(aes(ymin = lo, ymax = hi), position = position_dodge(width = 0.7), size = 0.35) +
+  scale_color_manual(values = COL, guide = "none") + scale_x_discrete(labels = c(tstd = "SIR stat.", scan = "Scan", mean = "Mean")) +
+  scale_shape_manual(values = c("4x4" = 22, "5x5" = 21), name = "Grid") + scale_fill_manual(values = c(S = "grey20", P = "white"), name = "Design") +
+  guides(fill = guide_legend(override.aes = list(shape = 21, color = "black"))) +
+  labs(x = NULL, y = "Worst null rejection rate") + theme(legend.position = "right")
+bars <- function(d, xlab, legend = FALSE) {
+  ggplot(d, aes(pattern, power, fill = test)) + geom_col(position = position_dodge(width = 0.8), width = 0.75) +
+    scale_fill_manual(values = COL, labels = LAB, name = NULL) + scale_y_continuous(limits = c(0, 1.05), expand = c(0, 0)) +
+    labs(x = xlab, y = "Power at level 0.05") + theme(axis.text.x = element_text(angle = 35, hjust = 1),
+                                                       legend.position = if (legend) "top" else "none")
+}
+long3 <- rbindlist(lapply(c("S", "P"), function(d) {
+  R <- Rp[[d]]
+  rbindlist(lapply(pats, function(p) data.table(design = d, pattern = sub(" [0-9.]+$", "", p[2]), test = c("tstd", "scan", "mean"),
+                                                 power = c(R[p[1]]$tstd, R[p[1]]$scan, R[p[1]]$mean))))
+}))
+lv <- unique(long3$pattern); long3[, `:=`(pattern = factor(pattern, levels = lv), test = factor(test, levels = c("tstd", "scan", "mean")))]
+pB <- bars(long3[design == "S"], NULL, TRUE); pC <- bars(long3[design == "P"], NULL)
+dD <- sel[column %in% c("p_tstd", "p_scan", "p_companion")]
+dD[, test := factor(fifelse(column == "p_tstd", "SIR stat.", fifelse(column == "p_scan", "Scan", fifelse(study == "oneil", "Block t", "V2Sp"))),
+                    levels = c("SIR stat.", "Scan", "Block t", "V2Sp"))]
+dD[, study := factor(c(oneil = "O'Neil, P", almanac = "ALMANAC, S")[study], levels = c("O'Neil, P", "ALMANAC, S"))]
+pD <- ggplot(dD, aes(test, ratio_to_nominal, shape = factor(level), color = column)) +
+  geom_hline(yintercept = 1, linetype = 2, color = "grey40") +
+  geom_pointrange(aes(ymin = lo / level, ymax = hi / level), position = position_dodge(width = 0.7), size = 0.3) +
+  facet_wrap(~ study, scales = "free_x") +
+  scale_color_manual(values = c(p_tstd = COL[["tstd"]], p_scan = COL[["scan"]], p_companion = COL[["mean"]]), guide = "none") +
+  scale_shape_manual(values = c(16, 15, 17), name = expression(alpha)) +
+  labs(x = NULL, y = expression("Null rejection rate / " * alpha)) + theme(legend.position = "right", axis.text.x = element_text(angle = 40, hjust = 1))
+real_sel <- list(`O'Neil (design P)` = c("syn_broad_0.05", "syn_highdose_0.10", "sat_0.5"),
+                 `ALMANAC (design S)` = c("syn_broad_0.10", "syn_highdose_0.20", "sat_1.0"))
+dEF <- rbindlist(lapply(names(real_sel), function(st) {
+  x <- rpw[study == st & cond %in% real_sel[[st]]][match(real_sel[[st]], cond)]
+  x[, pattern := factor(sprintf("%s\n(%s)", c("Broad", "High dose", "Saturating"), hu(eff_mean)), levels = sprintf("%s\n(%s)", c("Broad", "High dose", "Saturating"), hu(eff_mean)))]
+  rbindlist(lapply(c("tstd", "scan", "companion"), function(t) {
+    if (st == "ALMANAC (design S)" && t == "companion") return(NULL)
+    data.table(study = st, pattern = x$pattern, test = factor(ifelse(t == "companion", "mean", t), levels = c("tstd", "scan", "mean")), power = x[[t]])
+  }))
+}))
+small_x <- theme(axis.text.x = element_text(angle = 0, hjust = 0.5, size = 8))
+pE <- bars(dEF[study == "O'Neil (design P)"], "Pattern (mean Bliss excess)") + small_x
+pF <- bars(dEF[study == "ALMANAC (design S)"], "Pattern (mean Bliss excess)") + small_x
+(pA | pB | pC) / (pD | pE | pF) + plot_annotation(tag_levels = list(c("A.", "B.", "C.", "D.", "E.", "F.")))
+```
+
+## Adversarial search over antagonistic surfaces
+
+Because exact Bliss is the least-favorable null only under the monotone-noise condition, we also searched for a counterexample numerically. The search hill-climbs over antagonistic surfaces $\mu=\mu^B+\delta$, $\delta\ge0$, to find one with a higher rejection rate than exact Bliss, using common random numbers so that the search is deterministic.
+
+```{r null-search}
+tbl(data.frame(
+  quantity = c("searches (design x grid x surface x law x statistic x level)", "hill climbs",
+               "climbs ending above the exact-Bliss rate on the search sample",
+               "candidate surfaces re-evaluated on fresh datasets", "fresh datasets per candidate",
+               "candidates that rejected a dataset exact Bliss did not",
+               "largest increase in rejection rate over exact Bliss among candidates"),
+  value = c(nss$searches, nss$climbs, nss$climbs_above_bliss, nss$candidates, nss$datasets_per_candidate,
+            nss$candidates_new_rejection, nss$max_diff_vs_bliss)), row.names = FALSE)
+add_chk("Results: number of antagonistic hill climbs", 1848, nss$climbs, 0)
+add_chk("Supplement S4: number of searches", 132, nss$searches, 0)
+```
+
+None of the `r nss$climbs` hill climbs ended above the exact-Bliss rate, and none of the `r nss$candidates` candidate surfaces re-evaluated on `r nss$datasets_per_candidate` fresh datasets produced a rejection that exact Bliss did not. The search is evidence for the theorem under the noise laws we tried, including the O'Neil SD curve, whose heteroscedastic Gaussian form lies slightly outside the monotone-noise condition.
+
+**Decision point:** with a matched reference the level is controlled in simulation and in real noise, and misspecifying the SD curve visibly breaks it. The next section removes the other components of the reference one at a time to see which of them the level depends on.
+
+# Figure S1 and Table S4: what the reference must contain
+
+## Rationale
+
+Section 3 listed four components that the reference plate must reproduce. Figure S1, drawn below from the count tables, removes them one at a time in simulated design-P matrices whose true single-agent curves come from real pooled O'Neil curves. Each simulated cell line has 20 drugs and 190 pairs, one reported curve per drug shared by the 19 pairs of that drug, and combination wells with the O'Neil SD curve. A reported curve is the mean of $m_s$ replicate curves, with $m_s=1,4,8$ or exact ($\infty$). We expect an omitted component to inflate the rejection rate, the inflation to shrink as $m_s$ grows (a mean of more replicates is closer to the truth), and the matched reference to restore the level.
+
+
+
+The panels are: **A.** per-matrix rejection rate at exact Bliss against $m_s$, reference without (solid) or with (dashed) the single-agent noise component, for the three tests. **B.** Probability that Benjamini-Hochberg at $q=0.05$ makes at least one call in an all-null cell line of 190 pairs. **C.** Rejection rate against the plate shift $\tau/\sigma$. **D.** Rejection rate divided by the level for means of four replicate plates with $t_4$ noise, with a reference that averages four independent plates or one that draws a single plate at half the SD.
+
+## Rebuilding Table S4
+
+The per-matrix rates use clustered intervals (cell line as the cluster), because pairs that share a reported curve are dependent.
+
+```{r table-s4}
+MS <- c(1, 4, 8)
+pm <- function(col, m, rf) {
+  k <- c(p_t1 = "k_t1", p_s1 = "k_s1", p_m = "k_m")[[col]]
+  g <- st_null_c[share == "shared" & m_s == m & ref == rf]
+  cl_counts(g[[k]], g$n)
+}
+fw <- function(m, rf) {
+  g <- st_fam[m_s == m & share == "shared" & ref == rf]
+  k <- sum(g$any_disc); n <- nrow(g); w <- wilson(k, n)
+  c(p = k / n, lo = w[1], hi = w[2], n = n)
+}
+pm_R0 <- sapply(c(MS, Inf), function(m) pm("p_t1", m, "R0")["p"])
+pm_R1 <- sapply(MS, function(m) pm("p_t1", m, "R1")["p"])
+fw_R0 <- sapply(c(MS, Inf), function(m) fw(m, "R0")["p"])
+fw_R1 <- sapply(MS, function(m) fw(m, "R1")["p"])
+
+syn <- st_mixed_c[cls == "syn"]
+pow_pm <- sapply(c(MS, Inf), function(m) {
+  g <- syn[m_s == m]
+  mean(g$k_t1 / g$n)
+})
+pow_bh <- sapply(MS, function(m) mean(st_mfam[m_s == m]$n_true / st_mfam[m_s == m]$n_syn))
+
+ratios <- c(0, 0.1, 0.25, 0.5)
+shift_rate <- function(rf, r) {
+  g <- st_shift_c[m_s == Inf & ratio == r & ref == (if (r > 0) rf else "without")]
+  g$k_t / g$n
+}
+sh_without <- sapply(ratios, shift_rate, rf = "without")
+sh_with    <- sapply(ratios, shift_rate, rf = "with")
+
+mine4 <- list(c(hu(pm_R0[1:3]), hu(pm_R0[4])), c(hu(pm_R1), ""), c(hu(fw_R0[1:3]), hu(fw_R0[4])),
+              c(hu(fw_R1), ""), c(hu(pow_pm[1:3]), hu(pow_pm[4])), c(hu(pow_bh), ""),
+              hu(sh_without), hu(sh_with))
+top <- data.frame(do.call(rbind, mine4[1:6]), row.names = NULL)
+names(top) <- c("m_s = 1", "m_s = 4", "m_s = 8", "exact")
+top <- cbind(Quantity = c("Per matrix, curves treated as exact", "Per matrix, curves redrawn",
+                          "BH family-wise error, curves treated as exact", "BH family-wise error, curves redrawn",
+                          "Power per matrix, curves redrawn", "Power after BH, curves redrawn"), top)
+bottom <- data.frame(do.call(rbind, mine4[7:8]), row.names = NULL)
+names(bottom) <- paste0("tau/sigma = ", ratios)
+bottom <- cbind(Quantity = c("Plate shift omitted from the reference", "Plate shift in the reference"), bottom)
+tbl(top, row.names = FALSE)
+tbl(bottom, row.names = FALSE)
+other <- do.call(rbind, lapply(c(tstd = "p_t1", scan = "p_s1", mean = "p_m"), function(cc) {
+  rbind(`curves treated as exact` = c(sapply(MS, function(m) pm(cc, m, "R0")["p"]), pm(cc, Inf, "R0")["p"]),
+        `curves redrawn` = c(sapply(MS, function(m) pm(cc, m, "R1")["p"]), NA))
+}))
+other <- data.frame(Test = rep(LAB, each = 2), Reference = rownames(other), `m_s = 1` = hu(other[, 1]),
+                    `m_s = 4` = hu(other[, 2]), `m_s = 8` = hu(other[, 3]),
+                    exact = ifelse(is.na(other[, 4]), "", hu(other[, 4])), check.names = FALSE, row.names = NULL)
+tbl(other, row.names = FALSE)
+cat("Identical to tables/tabS4_stress.tex:", tex_same(mine4, "tables/tabS4_stress.tex"), "\n")
+cat("Matrices per cell:", sum(st_null_c[share == "shared" & m_s == 1 & ref == "R0"]$n),
+    "; all-null cell lines per point:", nrow(st_fam[m_s == 4 & share == "shared" & ref == "R1"]), "\n")
+
+add_chk("Results/Table S4: omitted curves, m_s = 1", 0.358, pm_R0[1])
+add_chk("Results/Table S4: omitted curves, m_s = 4", 0.163, pm_R0[2])
+add_chk("Results/Table S4: omitted curves, m_s = 8", 0.107, pm_R0[3])
+add_chk("Results/Table S4: redrawn curves, m_s = 1", 0.025, pm_R1[1])
+add_chk("Results/Table S4: redrawn curves, m_s = 4", 0.041, pm_R1[2])
+add_chk("Results/Table S4: redrawn curves, m_s = 8", 0.046, pm_R1[3])
+add_chk("Results: BH family-wise error with redrawn curves, at most (largest over m_s)", 0.023, max(fw_R1))
+add_chk("Results: shift omitted, tau/sigma = 0.1", 0.081, sh_without[2])
+add_chk("Results: shift omitted, tau/sigma = 0.25", 0.168, sh_without[3])
+add_chk("Results: shift omitted, tau/sigma = 0.5", 0.274, sh_without[4])
+add_chk("Results: shift in reference, tau/sigma = 0.1", 0.048, sh_with[2])
+add_chk("Results: shift in reference, tau/sigma = 0.5", 0.049, sh_with[4])
+add_chk("Results: power after BH, m_s = 1", 0.042, pow_bh[1])
+add_chk("Results: power after BH, m_s = 4", 0.456, pow_bh[2])
+add_chk("Results: power after BH, m_s = 8", 0.653, pow_bh[3])
+```
+
+## The replicate structure (Figure S1D)
+
+```{r s1d}
+AL <- c(0.05, 0.01, 0.005)
+rep_tab <- rbindlist(lapply(c("p_single", "p_matched"), function(cc) {
+  rbindlist(lapply(AL, function(a) {
+    k <- sum(st_reps[[cc]] <= a + 1e-12); n <- nrow(st_reps); w <- wilson(k, n)
+    data.table(reference = c(p_single = "single draw at half SD", p_matched = "mean of four independent draws")[cc],
+               level = a, rate = k / n, lo = w[1], hi = w[2], ratio = k / n / a, matrices = n)
+  }))
+}))
+tbl(rep_tab[, .(reference, level, matrices, rate = hu(rate, 4), interval = sprintf("[%s, %s]", hu(lo, 4), hu(hi, 4)),
+                `rate / level` = sprintf("%.2f", ratio))], row.names = FALSE)
+add_chk("Supplement S4: four-plate reference, level 0.05", 0.0499, rep_tab[reference == "mean of four independent draws" & level == 0.05, rate], 4)
+add_chk("Supplement S4: four-plate reference, level 0.01", 0.0101, rep_tab[reference == "mean of four independent draws" & level == 0.01, rate], 4)
+add_chk("Supplement S4: four-plate reference, level 0.005", 0.0051, rep_tab[reference == "mean of four independent draws" & level == 0.005, rate], 4)
+add_chk("Supplement S4: single-draw reference, level 0.05", 0.0416, rep_tab[reference == "single draw at half SD" & level == 0.05, rate], 4)
+add_chk("Supplement S4: single-draw reference, level 0.01", 0.0057, rep_tab[reference == "single draw at half SD" & level == 0.01, rate], 4)
+add_chk("Supplement S4: single-draw reference, level 0.005", 0.0020, rep_tab[reference == "single draw at half SD" & level == 0.005, rate], 4)
+```
+
+
+```{r s1-fig, fig.height=7.5, fig.cap="Supplementary Figure S1, redrawn in R from the stress-study tables."}
+d_a <- rbindlist(lapply(list(c("tstd", "p_t1"), c("scan", "p_s1"), c("mean", "p_m")), function(tc) {
+  rbindlist(lapply(c("R0", "R1"), function(rf) {
+    rbindlist(lapply(c(1, 4, 8, Inf), function(m) {
+      if (is.infinite(m) && rf == "R1") return(NULL)
+      r <- pm(tc[2], m, rf)
+      data.table(test = tc[1], reference = c(R0 = "Without the component", R1 = "With the component")[rf],
+                 ms = ifelse(is.infinite(m), "exact", as.character(m)), p = r[["p"]], lo = r[["lo"]], hi = r[["hi"]])
+    }))
+  }))
+}))
+d_a[, ms := factor(ms, levels = c("1", "4", "8", "exact"))]
+dodge <- position_dodge(width = 0.5)
+pA <- ggplot(d_a, aes(ms, p, color = test, linetype = reference, shape = reference, group = interaction(test, reference))) +
+  geom_hline(yintercept = 0.05, linetype = 2, color = "grey40") +
+  geom_pointrange(aes(ymin = lo, ymax = hi), position = dodge, size = 0.3) + geom_line(position = dodge) +
+  scale_y_log10(breaks = c(0.02, 0.05, 0.1, 0.2, 0.4, 1)) +
+  scale_color_manual(values = COL, labels = LAB, name = NULL) + scale_shape_manual(values = c(16, 1), name = NULL) +
+  scale_linetype_manual(values = c(1, 2), name = NULL) +
+  labs(x = expression("Single-agent replicates, " * m[s]), y = "Rejection rate at exact Bliss")
+fam_pt <- function(m, sh, rf) {
+  g <- st_fam[m_s == m & share == sh & ref == rf]; k <- sum(g$any_disc); n <- nrow(g); w <- wilson(k, n)
+  data.table(ms = ifelse(is.infinite(m), "exact", as.character(m)), curves = sh, reference = rf, p = k / n, lo = w[1, "lo"], hi = w[1, "hi"])
+}
+d_b <- rbindlist(c(lapply(c(1, 4, 8), function(m) rbindlist(lapply(c("shared", "indep"), function(sh) rbindlist(lapply(c("R0", "R1"), function(rf) fam_pt(m, sh, rf)))))),
+                   list(fam_pt(Inf, "shared", "R0"))))
+d_b[, `:=`(ms = factor(ms, levels = c("1", "4", "8", "exact")),
+           reference = c(R0 = "Without the component", R1 = "With the component")[reference],
+           curves = c(shared = "Shared curves", indep = "Independent curves")[curves])]
+pB <- ggplot(d_b, aes(ms, p, color = curves, shape = reference, group = interaction(curves, reference))) +
+  geom_hline(yintercept = 0.05, linetype = 2, color = "grey40") +
+  geom_pointrange(aes(ymin = lo, ymax = hi), position = dodge, size = 0.3) + geom_line(position = dodge) +
+  scale_shape_manual(values = c(16, 1), name = NULL) + scale_color_manual(values = c("Shared curves" = "#0072B2", "Independent curves" = "#56B4E9"), name = NULL) +
+  labs(x = expression("Single-agent replicates, " * m[s]), y = "Probability of any BH call")
+d_c <- rbindlist(lapply(c(Inf, 4), function(m) rbindlist(lapply(c("without", "with"), function(rf) rbindlist(lapply(ratios, function(r) {
+  g <- st_shift_c[m_s == m & ratio == r & ref == (if (r > 0) rf else "without")]; w <- wilson(g$k_t, g$n)
+  data.table(m = ifelse(is.infinite(m), "Exact curves", "m_s = 4, curves redrawn"), reference = rf, ratio = r, p = g$k_t / g$n, lo = w[1, "lo"], hi = w[1, "hi"])
+}))))))
+pC <- ggplot(d_c, aes(ratio, p, color = m, linetype = reference, shape = reference)) +
+  geom_hline(yintercept = 0.05, linetype = 2, color = "grey40") + geom_pointrange(aes(ymin = lo, ymax = hi), size = 0.3) + geom_line() +
+  scale_color_manual(values = c("Exact curves" = "#0072B2", "m_s = 4, curves redrawn" = "#56B4E9"), name = NULL) +
+  scale_shape_manual(values = c(without = 16, with = 1), labels = c("Shift omitted", "Shift included"), name = NULL) +
+  scale_linetype_manual(values = c(without = 1, with = 2), labels = c("Shift omitted", "Shift included"), name = NULL) +
+  coord_cartesian(ylim = c(0, 0.3)) +
+  labs(x = expression("Plate shift, " * tau / sigma), y = "Rejection rate at exact Bliss")
+d_d <- rbindlist(lapply(c(p_single = "Single draw at half SD", p_matched = "Mean of four independent draws"), function(lab) NULL))
+d_d <- rbindlist(lapply(c("p_single", "p_matched"), function(cc) rbindlist(lapply(c(0.05, 0.01, 0.005), function(a) {
+  k <- sum(st_reps[[cc]] <= a + 1e-12); n <- nrow(st_reps); w <- wilson(k, n)
+  data.table(reference = c(p_single = "Single draw at half SD", p_matched = "Mean of four independent draws")[cc], level = factor(a), ratio = k / n / a,
+             lo = w[1, "lo"] / a, hi = w[1, "hi"] / a)
+}))))
+pD <- ggplot(d_d, aes(level, ratio, color = reference, group = reference)) +
+  geom_hline(yintercept = 1, linetype = 2, color = "grey40") + geom_pointrange(aes(ymin = lo, ymax = hi), position = position_dodge(width = 0.3), size = 0.3) +
+  scale_color_manual(values = c("Single draw at half SD" = "#D55E00", "Mean of four independent draws" = "#0072B2"), name = "Reference plate") +
+  coord_cartesian(ylim = c(0, 1.75)) + labs(x = expression("Level " * alpha), y = expression("Rejection rate / " * alpha))
+leg <- theme(legend.position = "right", legend.text = element_text(size = 8), legend.title = element_text(size = 8))
+((pA + pB + pC + pD) + plot_layout(ncol = 2) & leg) + plot_annotation(tag_levels = list(c("A.", "B.", "C.", "D.")))
+
+```
+
+**What do we see?**
+
+Treating noisy reported curves as exact inflates the per-matrix rejection rate of the SIR statistic to `r hu(pm_R0[1])`, `r hu(pm_R0[2])` and `r hu(pm_R0[3])` for $m_s=1$, 4 and 8, against `r hu(pm_R0[4])` for truly exact curves; the scan (`r hu(pm("p_s1", 1, "R0")["p"])`, `r hu(pm("p_s1", 4, "R0")["p"])`, `r hu(pm("p_s1", 8, "R0")["p"])`) and the mean test (`r hu(pm("p_m", 1, "R0")["p"])`, `r hu(pm("p_m", 4, "R0")["p"])`, `r hu(pm("p_m", 8, "R0")["p"])`) follow the same pattern. The inflation shrinks as the curves are averaged over more replicates, because the average moves toward the truth. Redrawing both curves in every reference plate brings the SIR statistic to `r hu(pm_R1[1])`, `r hu(pm_R1[2])` and `r hu(pm_R1[3])`, slightly conservative at small $m_s$, which is the price of a reference that carries the full single-agent uncertainty.
+
+The damage compounds across a screen because pairs that share a reported curve share its error. In an all-null cell line of 190 pairs, Benjamini-Hochberg made at least one call in `r hu(fw_R0[1])`, `r hu(fw_R0[2])` and `r hu(fw_R0[3])` of cell lines when the curves were treated as exact (`r hu(fw_R0[4])` with exact curves), and in `r hu(fw_R1[1])`, `r hu(fw_R1[2])` and `r hu(fw_R1[3])` when they were redrawn. The honest reference has a cost in power: with redrawn curves the per-matrix power is `r hu(pow_pm[1])`, `r hu(pow_pm[2])` and `r hu(pow_pm[3])` (`r hu(pow_pm[4])` with exact curves), and the share of synergistic pairs called by BH is `r hu(pow_bh[1])`, `r hu(pow_bh[2])` and `r hu(pow_bh[3])`. Single-agent replication therefore matters more for screening power than adding doses.
+
+Omitting the plate shift also inflates the rate, to `r hu(sh_without[2])`, `r hu(sh_without[3])` and `r hu(sh_without[4])` at $\tau/\sigma=0.1$, 0.25 and 0.5, while a reference that includes the shift stays at `r hu(sh_with[2])` to `r hu(sh_with[4])`. The replicate structure matters in the tail: for means of four plates with $t_4$ noise, a reference averaging four independent plates gives `r hu(rep_tab[reference == "mean of four independent draws" & level == 0.05, rate], 4)`, `r hu(rep_tab[reference == "mean of four independent draws" & level == 0.01, rate], 4)` and `r hu(rep_tab[reference == "mean of four independent draws" & level == 0.005, rate], 4)` at levels 0.05, 0.01 and 0.005 (ratios `r sprintf("%.2f", rep_tab[reference == "mean of four independent draws", ratio])`), while one draw at half the SD, with the same variance but heavier tails, gives `r hu(rep_tab[reference == "single draw at half SD" & level == 0.05, rate], 4)`, `r hu(rep_tab[reference == "single draw at half SD" & level == 0.01, rate], 4)` and `r hu(rep_tab[reference == "single draw at half SD" & level == 0.005, rate], 4)`, which is conservative and gets worse at small levels.
+
+**Decision point:** each of the four components has to be in the reference, and the matched reference is the one we use. Having fixed the reference, the practical question is how much effect a given grid can detect.
+
+# Figure 4 and Table S7: how large an effect does a grid detect?
+
+## Rationale
+
+The practical question for planning an experiment is the effect size at which the SIR statistic reaches 80% power, as a function of the grid and the synergy shape. We expect power to rise with the number of doses, because more cells carry the same effect, and to rise more slowly in design S than in design P: in design S the single-agent wells enter every Bliss prediction, so adding combination cells does not remove the single-agent noise. We also expect a single corner cell to need a much larger effect than a broad shift.
+
+
+
+The figure is drawn below from the grid tables. Panels A to D plot the power of the SIR statistic against the mean Bliss excess for broad, high-dose, corner (against the top-cell excess) and saturating synergy, one line per grid. Panels E and F show the effect needed for 80% power against the grid size for the three tests, at levels 0.05 and 0.005.
+
+## Rebuilding Table S7 and panels E and F
+
+The threshold is the amplitude at which a monotone fit of power against amplitude crosses 0.8, converted to the mean excess on the viability scale (top-cell excess for the corner pattern); `>x` means that 80% is not reached within the largest simulated effect.
+
+```{r table-s7}
+GRIDS <- c(4, 5, 6, 8, 10)
+cell80 <- function(des, pat, tst, grid, lev = 0.05) {
+  x <- g_e80[design == des & noise == "oneil" & pattern == pat & test == tst &
+               g_e80$I == grid & abs(alpha - lev) < 1e-12]
+  stopifnot(nrow(x) == 1)
+  which <- if (pat == "corner") "max" else "mean"
+  if (x$reached) sprintf("%.3f", x[[paste0(which, "_eta80")]]) else sprintf("$>%.2f$", x[[paste0(which, "_eta_at_max")]])
+}
+rows7 <- list(c("S", "broad", "tstd"), c("S", "broad", "scan"), c("S", "broad", "mean"), c("S", "highdose", "tstd"),
+              c("S", "corner", "tstd"), c("S", "corner", "scan"), c("S", "corner", "mean"), c("S", "sat", "tstd"),
+              c("P", "broad", "tstd"), c("P", "broad", "mean"), c("P", "highdose", "tstd"), c("P", "corner", "tstd"),
+              c("P", "corner", "scan"), c("P", "sat", "tstd"))
+PN <- c(broad = "Broad", highdose = "High-dose", corner = "Corner", sat = "Saturating")
+s7 <- lapply(rows7, function(r) sapply(GRIDS, function(I) cell80(r[1], r[2], r[3], I)))
+s7_df <- data.frame(Design = sapply(rows7, `[`, 1), Pattern = PN[sapply(rows7, `[`, 2)],
+                    Test = LAB[sapply(rows7, `[`, 3)], do.call(rbind, s7), row.names = NULL)
+names(s7_df)[4:8] <- paste0(GRIDS, "x", GRIDS)
+s7_show <- s7_df; s7_show[4:8] <- lapply(s7_show[4:8], function(x) gsub("\\$", "", x))
+tbl(s7_show, row.names = FALSE)
+cat("Identical to tables/tabS7_grid.tex:", tex_same(s7, "tables/tabS7_grid.tex"), "\n")
+
+eS <- as.numeric(s7[[1]]); eP <- as.numeric(s7[[9]])
+add_chk("Results: broad synergy threshold, design S, 4x4", 0.149, eS[1])
+add_chk("Results: broad synergy threshold, design S, 10x10", 0.083, eS[5])
+add_chk("Results: broad synergy threshold, design P, 4x4", 0.083, eP[1])
+add_chk("Results: broad synergy threshold, design P, 10x10", 0.030, eP[5])
+```
+
+```{r panel-ad}
+panels <- list(c("broad", "moderate", "Broad synergy (moderate agents)"), c("highdose", "moderate", "High-dose synergy (moderate agents)"),
+               c("corner", "weak", "Corner synergy (weak agents)"), c("sat", "strong", "Saturating synergy (strong agents)"))
+dA <- rbindlist(lapply(panels, function(pp) {
+  g <- g_cnt[design == "S" & noise == "oneil" & surface == pp[2] & pattern %in% c(pp[1], "null")]
+  g <- g[, .(panel = pp[3], grid = I, x = if (pp[1] == "corner") max_eta else mean_eta, power = `tstd@0.05`)]
+  if (pp[1] != "corner") g <- g[x > 0]
+  g
+}))
+# Independent check of the 80% threshold: cross 0.8 on the raw (monotonized) power curve for broad synergy
+cross <- dA[panel == panels[[1]][3], {
+  o <- order(x); pw <- cummax(power[o]); .(crossing = approx(pw, x[o], xout = 0.8, ties = min)$y)
+}, by = grid]
+cross[, table_value := sapply(grid, function(gg) as.numeric(cell80("S", "broad", "tstd", gg)))]
+tbl(cross[, .(grid, `crossing of raw power curve` = round(crossing, 3), `Table S7 value` = table_value)], row.names = FALSE)
+```
+
+```{r panel-ef, fig.height=7, fig.cap="Main Figure 4, redrawn in R from the grid tables."}
+curve_panel <- function(i) {
+  d <- dA[panel == panels[[i]][3]]
+  g <- ggplot(d, aes(x, power, color = factor(grid))) + geom_hline(yintercept = c(0.05, 0.8), linetype = 3, color = "grey50") +
+    geom_line() + geom_point(size = 0.8) + scale_color_brewer(palette = "Blues", name = "Grid") + ylim(0, 1) +
+    labs(x = if (i == 3) "Top-cell Bliss excess" else "Mean Bliss excess", y = expression("Power of " * T[SIR] * " at level 0.05"))
+  if (i != 3) g <- g + scale_x_log10(breaks = c(0.003, 0.01, 0.03, 0.1, 0.3), labels = c("0.003", "0.01", "0.03", "0.1", "0.3"))
+  g
+}
+eplot <- function(pat, which) {
+  d <- g_e80[design == "S" & noise == "oneil" & pattern == pat & alpha %in% c(0.05, 0.005)]
+  y <- paste0(which, "_eta80"); d$y <- d[[y]]; d$lo <- d[[paste0(which, "_eta80_lo")]]; d$hi <- d[[paste0(which, "_eta80_hi")]]
+  d <- d[is.finite(y)]
+  d[, level := factor(alpha, levels = c(0.05, 0.005), labels = c("0.05", "0.005"))]
+  ggplot(d, aes(I, y, color = test, linetype = level, shape = level)) + geom_line() + geom_point(size = 1.8) +
+    geom_linerange(aes(ymin = lo, ymax = hi), linetype = 1) +
+    scale_color_manual(values = COL, labels = LAB, name = NULL) + scale_x_continuous(breaks = GRIDS) +
+    scale_shape_manual(values = c(16, 1), name = "Level") + scale_linetype_manual(values = c(1, 2), name = "Level") +
+    labs(x = "Doses per agent, including zero", y = if (which == "mean") "Mean excess for 80% power" else "Top-cell excess\nfor 80% power")
+}
+pAd <- curve_panel(1) + theme(legend.position = "right")
+fig4 <- (pAd + curve_panel(2) + curve_panel(3) + curve_panel(4) + eplot("broad", "mean") + eplot("corner", "max")) +
+  plot_layout(ncol = 3, guides = "collect") & theme(legend.position = "bottom")
+fig4 + plot_annotation(tag_levels = list(c("A.", "B.", "C.", "D.", "E.", "F.")))
+```
+
+```{r grid-extra}
+rS <- as.data.table(g_num$ratio_005_vs_05_tstd_broad_S)
+rall <- as.data.table(g_num$ratio_005_vs_05_tstd_all)
+cs <- g_e80[design == "S" & noise == "oneil" & pattern == "corner" & alpha == 0.05]
+extra <- data.frame(
+  quantity = c("level 0.005 / level 0.05 effect, T_SIR, design S broad (range over grids)",
+               "same ratio, all patterns and both designs where both levels reach 80% (range)",
+               "design S, corner: region scan top-cell excess for 80% power (range over grids)",
+               "design S, corner: T_SIR power at the largest simulated top-cell excess (maximum over grids)",
+               "design S, corner: largest simulated top-cell excess"),
+  value = c(sprintf("%.2f to %.2f", min(rS$ratio), max(rS$ratio)),
+            sprintf("%.2f to %.2f", min(rall$ratio), max(rall$ratio)),
+            sprintf("%.3f to %.3f", min(cs[test == "scan"]$max_eta80), max(cs[test == "scan"]$max_eta80)),
+            sprintf("%.3f", max(cs[test == "tstd"]$power_at_max)),
+            sprintf("%.3f", cs$max_eta_at_max[1])))
+tbl(extra, row.names = FALSE)
+add_chk("Supplement S8: level-0.005 effect ratio, design S broad, lower end", 1.37, min(rS$ratio), 2)
+add_chk("Supplement S8: level-0.005 effect ratio, design S broad, upper end", 1.39, max(rS$ratio), 2)
+add_chk("Supplement S8: level-0.005 effect ratio, all patterns, lower end", 1.27, min(rall$ratio), 2)
+add_chk("Supplement S8: level-0.005 effect ratio, all patterns, upper end", 1.54, max(rall$ratio), 2)
+add_chk("Results: corner design S, scan threshold, lower end (0.41)", 0.41, min(cs[test == "scan"]$max_eta80), 2)
+add_chk("Results: corner design S, scan threshold, upper end (0.46)", 0.46, max(cs[test == "scan"]$max_eta80), 2)
+add_chk("Results: corner design S, SIR statistic power at largest effect (at most 0.74)", 0.74, max(cs[test == "tstd"]$power_at_max), 2)
+add_chk("Results: largest simulated top-cell excess", 0.48, cs$max_eta_at_max[1], 2)
+```
+
+## Null rates across the grid
+
+```{r grid-null}
+gs <- g_size[, .(design, I, surface, noise, n,
+                 tstd = `tstd@0.05`, scan = `scan@0.05`, mean = `mean@0.05`,
+                 k_tstd = `k_tstd@0.05`, k_scan = `k_scan@0.05`, k_mean = `k_mean@0.05`)]
+by_grid <- gs[, .(cells = .N, tstd_min = min(tstd), tstd_max = max(tstd), tstd_pooled = sum(k_tstd) / sum(n),
+                  scan_pooled = sum(k_scan) / sum(n), mean_pooled = sum(k_mean) / sum(n)), by = .(design, I)][order(design, I)]
+tbl(by_grid[, lapply(.SD, function(x) if (is.numeric(x)) round(x, 4) else x)], row.names = FALSE)
+pS <- by_grid[design == "S"]; pPd <- by_grid[design == "P"]
+add_chk("Supplement S8: SIR statistic null rate design S, per-cell minimum", 0.023, min(pS$tstd_min))
+add_chk("Supplement S8: SIR statistic null rate design S, per-cell maximum", 0.045, max(pS$tstd_max))
+add_chk("Supplement S8: SIR statistic pooled null rate design S, lowest grid", 0.029, min(pS$tstd_pooled))
+add_chk("Supplement S8: SIR statistic pooled null rate design S, highest grid", 0.032, max(pS$tstd_pooled))
+add_chk("Supplement S8: SIR statistic pooled null rate design P, lowest grid", 0.046, min(pPd$tstd_pooled))
+add_chk("Supplement S8: SIR statistic pooled null rate design P, highest grid", 0.050, max(pPd$tstd_pooled))
+```
+
+**What do we see?**
+
+More doses help, and help more in design P. For broad synergy the SIR statistic needs a mean excess of `r hu(eS[1])` on a $4\times4$ grid and `r hu(eS[5])` on a $10\times10$ grid in design S, a fall of `r sprintf("%.0f", 100 * (1 - eS[5] / eS[1]))`%, and `r hu(eP[1])` to `r hu(eP[5])` in design P, a fall of `r sprintf("%.0f", 100 * (1 - eP[5] / eP[1]))`%. In design S the single-agent wells enter every Bliss prediction, so extra combination cells do not remove their noise and the requirement falls slowly; the same holds for the other patterns in Table S7. The scan needs more for broad synergy (`r s7[[2]][1]` to `r s7[[2]][5]`), and the mean test starts higher (`r s7[[3]][1]`) and ends slightly below the SIR statistic on the $10\times10$ grid (`r s7[[3]][5]`). The cross-check table shows that crossing 0.8 on the raw power curve gives the Table S7 value to within 0.001 on every grid.
+
+A single synergistic corner cell is the hardest pattern. In design S the SIR statistic and the mean test do not reach 80% within the largest simulated top-cell excess (`r f3(cs$max_eta_at_max[1], 2)`; the SIR statistic reaches `r f3(max(cs[test == "tstd"]$power_at_max))` at the largest grid), whereas the scan does, at a top-cell excess of `r f3(min(cs[test == "scan"]$max_eta80))` to `r f3(max(cs[test == "scan"]$max_eta80))`. In design P, where the single agents are fixed, corner synergy is detectable with the SIR statistic at `r s7[[12]][1]` to `r s7[[12]][5]` and the scan is similar (`r s7[[13]][1]` to `r s7[[13]][5]`). Asking for level 0.005 instead of 0.05 costs a factor of `r sprintf("%.2f", min(rS$ratio))` to `r sprintf("%.2f", max(rS$ratio))` in the required effect for broad synergy in design S, and `r sprintf("%.2f", min(rall$ratio))` to `r sprintf("%.2f", max(rall$ratio))` over all patterns and designs where both levels reach 80%. These thresholds belong to tests with different null rates: the SIR statistic is conservative in design S at every grid (pooled `r hu(min(pS$tstd_pooled))` to `r hu(max(pS$tstd_pooled))` at nominal 0.05, per-cell range `r hu(min(pS$tstd_min))` to `r hu(max(pS$tstd_max))`) and near nominal in design P (pooled `r hu(min(pPd$tstd_pooled))` to `r hu(max(pPd$tstd_pooled))`), so the design-S thresholds are for a test that rejects about 3% at the nominal 5%.
+
+**Decision point:** the grid guidance gives a planning number for each pattern. One question remains about the reference itself: how much does the plug-in lose or gain relative to a version that carries a formal guarantee?
+
+# Figure S2: the Berger-Boos search as a sensitivity analysis
+
+## Rationale
+
+The plug-in reference is approximate. The Berger-Boos p-value of Section 3 has a guarantee, at the price of power, and the supremum must be searched. Figure S2, drawn below from the Berger-Boos tables, asks three questions on $5\times5$ grids with identical Hill single agents (weak, moderate, strong), additive, log-normal or O'Neil-shaped noise, and $m_s$ single-agent replicates per dose: (A) does the confidence band cover at its target, (B) does each version hold its level at exact Bliss, and (C, D) how much power does each version keep, relative to an oracle that knows the true curves? We expect the band to cover near 0.995, the search to be conservative, the loss of power to shrink as $m_s$ grows, and the plug-in to be close to the oracle.
+
+
+
+## Rebuilding the summary
+
+```{r s2-rebuild}
+conds <- c("bliss", "syn_broad", "syn_high", "syn_corner", "syn_sat")
+rows_b <- bb_rows[cond %in% conds]
+pl <- bb_plug[, .(noise, base, ms, cond, n_pl = n, k_pl = k)]
+rows_b <- merge(rows_b, pl, by = c("noise", "base", "ms", "cond"), all.x = TRUE, sort = FALSE)
+rows_b[, `:=`(oracle = `k_oracle_0.05` / n, plugin = k_pl / n_pl, bb = `k_BB_search_0.05` / n)]
+rows_b[ms == 256, bb := NA_real_]
+
+summ <- rbindlist(lapply(sort(unique(rows_b$ms)), function(m) {
+  d <- rows_b[ms == m]; b <- d[cond == "bliss"]; p <- d[cond != "bliss"]; p3 <- p[oracle >= 0.3]
+  data.table(ms = m,
+             size_oracle = sprintf("%.3f to %.3f", min(b$oracle), max(b$oracle)),
+             size_plugin = sprintf("%.3f to %.3f", min(b$plugin), max(b$plugin)),
+             size_bb = if (all(is.na(b$bb))) "not run" else sprintf("%.3f to %.3f", min(b$bb, na.rm = TRUE), max(b$bb, na.rm = TRUE)),
+             power_oracle = mean(p$oracle), power_plugin = mean(p$plugin),
+             power_bb = if (all(is.na(p$bb))) NA_real_ else mean(p$bb),
+             ratio_plugin = mean(p3$plugin / p3$oracle),
+             ratio_bb = if (all(is.na(p3$bb))) NA_real_ else mean(p3$bb / p3$oracle))
+}))
+tbl(summ[, lapply(.SD, function(x) if (is.numeric(x)) round(x, 3) else x)], row.names = FALSE)
+
+cmp <- merge(summ[, .(ms, ratio_plugin, ratio_bb)], bb_sum[, .(ms, ratio_plugin_file = ratio_plugin, ratio_bb_file = ratio_bb)], by = "ms")
+cat("Largest absolute difference from figS2_summary.csv (ratios):",
+    format(max(abs(cmp$ratio_plugin - cmp$ratio_plugin_file), abs(cmp$ratio_bb - cmp$ratio_bb_file), na.rm = TRUE), digits = 3), "\n")
+
+cv <- bb_cov[grid == "5x5" & method == "exact"]
+tbl(data.frame(settings = nrow(cv), coverage_min = min(cv$coverage), coverage_max = max(cv$coverage),
+               target = unique(cv$target), datasets_per_setting = paste(sort(unique(cv$n)), collapse = ", ")), digits = 4)
+
+bbr <- summ$ratio_bb
+add_chk("Supplement S7: band coverage, minimum over the m_s = 64 and 256 settings (paper: 0.9947)", 0.9947, min(cv[ms > 16]$coverage), 4)
+add_chk("Supplement S7: band coverage, minimum over the 1,000,000-dataset settings, m_s <= 16", 0.9949, min(cv[ms <= 16]$coverage), 4)
+add_chk("Supplement S7: band coverage, maximum", 0.9962, max(cv$coverage), 4)
+add_chk("Supplement S7: search power relative to oracle, m_s = 1", 0.12, bbr[1], 2)
+add_chk("Supplement S7: search power relative to oracle, m_s = 4", 0.47, bbr[2], 2)
+add_chk("Supplement S7: search power relative to oracle, m_s = 16", 0.88, bbr[3], 2)
+add_chk("Supplement S7: search power relative to oracle, m_s = 64", 0.95, bbr[4], 2)
+bsz <- rows_b[cond == "bliss"]
+add_chk("Supplement S7: search size, lowest", 0.000, min(bsz$bb, na.rm = TRUE))
+add_chk("Supplement S7: search size, highest", 0.037, max(bsz$bb, na.rm = TRUE))
+add_chk("Supplement S7: plug-in size over m_s = 1 to 256, lowest", 0.032, min(bsz$plugin))
+add_chk("Supplement S7: plug-in size over m_s = 1 to 256, highest", 0.063, max(bsz$plugin))
+add_chk("Supplement S7: plug-in power relative to oracle, lowest over m_s (paper: 0.99 to 1.00)", 0.99, min(summ$ratio_plugin), 2)
+add_chk("Supplement S7: plug-in power relative to oracle, highest over m_s", 1.00, max(summ$ratio_plugin), 2)
+add_chk("Supplement S7: extended search changed p by at most", 0.012, supp$band_search$max_p_change)
+```
+
+```{r s2-plot, fig.height=7, fig.cap="Supplementary Figure S2, redrawn in R from the Berger-Boos tables."}
+MSL <- sort(unique(rows_b$ms)); NZ <- c(add = "Additive", logn = "Log-normal", oneil = "O'Neil SD")
+METH <- c(oracle = "Oracle (true curves)", plugin = "Plug-in bootstrap", bb = "Berger-Boos search")
+MCOL <- c(oracle = "grey20", plugin = COL[["tstd"]], bb = "#AA4499")
+cvp <- bb_cov[grid == "5x5" & method == "exact"]
+cvp[, `:=`(ms = factor(ms, levels = MSL), noise = NZ[noise], base = factor(base, levels = c("weak", "moderate", "strong")))]
+pA <- ggplot(cvp, aes(ms, coverage, shape = noise, fill = base)) + geom_hline(yintercept = 0.995, linetype = 2, color = "grey40") +
+  geom_pointrange(aes(ymin = cov_lo, ymax = cov_hi), color = "#AA4499", position = position_dodge(width = 0.7), size = 0.25) +
+  scale_shape_manual(values = c(21, 22, 24), name = "Noise") + scale_fill_manual(values = c(weak = "white", moderate = "grey80", strong = "#AA4499"), name = "Drugs") +
+  guides(fill = guide_legend(override.aes = list(shape = 21))) + coord_cartesian(ylim = c(0.9935, 0.997)) +
+  labs(x = expression("Single-agent replicates per dose, " * m[s]), y = "Simultaneous coverage") + theme(legend.position = "right")
+bl <- melt(rows_b[cond == "bliss", .(ms = factor(ms, levels = MSL), noise, base, oracle, plugin, bb)], id.vars = c("ms", "noise", "base"), variable.name = "method", value.name = "rate")
+pB <- ggplot(bl[!is.na(rate)], aes(ms, rate, color = method, shape = method)) + geom_hline(yintercept = 0.05, linetype = 2, color = "grey40") +
+  geom_point(position = position_dodge(width = 0.6), size = 1.2, alpha = 0.9) +
+  scale_color_manual(values = MCOL, labels = METH, name = NULL) + scale_shape_manual(values = c(oracle = 16, plugin = 1, bb = 25), labels = METH, name = NULL) +
+  labs(x = expression(m[s]), y = "Rejection rate at exact Bliss") + theme(legend.position = "none")
+pw <- melt(rows_b[cond != "bliss", .(ms = factor(ms, levels = MSL), oracle, plugin, bb)], id.vars = "ms", variable.name = "method", value.name = "rate")
+pw <- pw[!is.na(rate), .(mean = mean(rate), q1 = quantile(rate, 0.25), q3 = quantile(rate, 0.75)), by = .(ms, method)]
+pC <- ggplot(pw, aes(ms, mean, color = method, shape = method)) +
+  geom_pointrange(aes(ymin = q1, ymax = q3), position = position_dodge(width = 0.6), size = 0.3) +
+  scale_color_manual(values = MCOL, labels = METH, name = NULL) + scale_shape_manual(values = c(oracle = 16, plugin = 1, bb = 25), labels = METH, name = NULL) +
+  ylim(0, 1) + labs(x = expression(m[s]), y = "Mean power") + theme(legend.position = "bottom")
+rt <- melt(summ[, .(ms = factor(ms, levels = MSL), plugin = ratio_plugin, bb = ratio_bb)], id.vars = "ms", variable.name = "method", value.name = "ratio")
+pD <- ggplot(rt[!is.na(ratio)], aes(ms, ratio, color = method, group = method)) + geom_hline(yintercept = 1, linetype = 2, color = "grey20") +
+  geom_line() + geom_point(size = 2) + scale_color_manual(values = MCOL, name = NULL) + coord_cartesian(ylim = c(0, 1.1)) +
+  labs(x = expression(m[s]), y = "Power relative to the oracle") + theme(legend.position = "none")
+(pA + pB + pC + pD) + plot_layout(ncol = 2) + plot_annotation(tag_levels = list(c("A.", "B.", "C.", "D.")))
+```
+
+**What do we see?**
+
+The band covers close to its target: over the `r nrow(cv)` settings the simultaneous coverage ranges from `r hu(min(cv$coverage), 4)` to `r hu(max(cv$coverage), 4)` against 0.995, and over the settings with 1,000,000 datasets (m_s of 1 to 16) from `r hu(min(cv[ms <= 16]$coverage), 4)` to `r hu(max(cv[ms <= 16]$coverage), 4)`; the lowest setting (`r c(add = "additive", logn = "log-normal", oneil = "O'Neil SD")[[cv[which.min(coverage)]$noise]]` noise, `r cv[which.min(coverage)]$base` agents, $m_s=$ `r cv[which.min(coverage)]$ms`, 200,000 datasets) has coverage `r hu(min(cv$coverage), 5)` [`r hu(cv[which.min(coverage)]$cov_lo, 5)`, `r hu(cv[which.min(coverage)]$cov_hi, 5)`], marginally under 0.995. The search holds its level conservatively (`r summ[ms == 1]$size_bb` at $m_s=1$ and `r summ[ms == 64]$size_bb` at $m_s=64$), against `r hu(min(bsz$oracle))` to `r hu(max(bsz$oracle))` for the oracle (all $m_s$) and `r hu(min(bsz$plugin))` to `r hu(max(bsz$plugin))` for the plug-in over all $m_s$. The price is power: relative to the oracle the search keeps `r hu(summ[ms == 1]$ratio_bb, 2)`, `r hu(summ[ms == 4]$ratio_bb, 2)`, `r hu(summ[ms == 16]$ratio_bb, 2)` and `r hu(summ[ms == 64]$ratio_bb, 2)` of the power at $m_s=1$, 4, 16 and 64, with mean power `r hu(summ[ms == 1]$power_bb)` against `r hu(summ[ms == 1]$power_oracle)` at $m_s=1$. The plug-in keeps `r hu(min(summ$ratio_plugin), 2)` to `r hu(max(summ$ratio_plugin), 2)` of the oracle power across all $m_s$ with its sizes in the band of `r hu(min(bsz$plugin))` to `r hu(max(bsz$plugin))`. The extended search that we ran changed p-values by at most `r supp$band_search$max_p_change`. The search is a lower bound on the supremum over the band, so its p-value is empirically conservative and not a proof of validity; we use it as a sensitivity analysis only for designs with at least 16 single-agent replicates, where it retains at least `r hu(summ[ms == 16]$ratio_bb, 2)` of the oracle power.
+
+# How to use the code
+
+The package fits one matrix with `sir_fit()`. The arguments that carry the content of this notebook are the design, the noise model, and the single-agent replicate structure. The chunks below fit one plate, and then repeat the calibration check at a small scale (400 simulated datasets per setting in design S and 600 in design P, 199 reference plates, first stage only; the elapsed time is printed below). These small runs illustrate the calls; they do not replace the 2,000-dataset cells of the Monte Carlo study, and a rate near 0.05 from 400 datasets carries a standard error of about `r hu(sqrt(0.05 * 0.95 / 400))`.
+
+```{r usage-fit, fig.height=3.5}
+summary(fit_ex)
+plot(fit_ex)
+```
+
+**Size when the reference matches, and when it is too tight.** Design S, the plate of the worked example at exact Bliss, additive Gaussian noise with SD 0.08. A reference with the true SD should reject near 0.05; a reference that assumes SD 0.03 is too tight.
+
+```{r usage-size}
+set.seed(777)
+sim_bliss <- function() { Y <- mu_bliss + matrix(rnorm(25, sd = 0.08), 5); Y[1, 1] <- 1; Y }
+reject <- function(sd_ref, gen, n = 400, B = 199L) {
+  nz <- sir_noise_parametric(sd = sd_ref)
+  p <- vapply(seq_len(n), function(i) sir_fit(gen(), design = "S", noise = nz, B = B, two_stage = FALSE,
+                                              seed = i)$p_tstd, numeric(1))
+  mean(p <= 0.05)
+}
+syn_gen <- function() { Y <- mu_bliss; Y[2:5, 2:5] <- Y[2:5, 2:5] - 0.08
+  Y <- Y + matrix(rnorm(25, sd = 0.08), 5); Y[1, 1] <- 1; Y }
+t_use <- system.time({
+  r_match <- reject(0.08, sim_bliss); r_tight <- reject(0.03, sim_bliss); r_pow <- reject(0.08, syn_gen)
+})
+use_tab <- data.frame(
+  setting = c("exact Bliss, reference SD 0.08 (matches the data)", "exact Bliss, reference SD 0.03 (too tight)",
+              "broad synergy of 0.08, reference SD 0.08"),
+  rejection_rate = c(r_match, r_tight, r_pow),
+  mc_se = sqrt(c(r_match, r_tight, r_pow) * (1 - c(r_match, r_tight, r_pow)) / 400))
+tbl(use_tab, digits = 3)
+cat("Elapsed:", round(t_use[["elapsed"]], 1), "seconds\n")
+```
+
+**Design P: treating noisy reported curves as exact.** Here the first row and column are reported curves, each the mean of four replicate curves with noise SD 0.08 per replicate. `sa_replicates = Inf` (the default) holds them fixed; `sa_replicates = 4` redraws them in every reference plate.
+
+```{r usage-design-p}
+set.seed(778)
+simP <- function(ms = 4) {
+  Y <- mu_bliss + matrix(rnorm(25, sd = 0.08), 5)
+  Y[1, ] <- c(1, a_true[-1] + rnorm(4, sd = 0.08 / sqrt(ms)))
+  Y[, 1] <- c(1, b_true[-1] + rnorm(4, sd = 0.08 / sqrt(ms)))
+  Y[1, 1] <- 1; Y
+}
+rejectP <- function(sa, n = 600, B = 199L) {
+  p <- vapply(seq_len(n), function(i) sir_fit(simP(), design = "P", noise = noise_ex, B = B, two_stage = FALSE,
+                                              sa_replicates = sa, sa_rho = 0, seed = i)$p_tstd, numeric(1))
+  mean(p <= 0.05)
+}
+rP <- c(exact = rejectP(Inf), redrawn = rejectP(4))
+tbl(data.frame(reference = c("reported curves treated as exact", "curves redrawn as means of 4 replicates"),
+               rejection_rate = rP, mc_se = sqrt(rP * (1 - rP) / 600)), digits = 3, row.names = FALSE)
+```
+
+With the reference SD equal to the data SD, the rejection rate is `r hu(r_match)` (Monte Carlo standard error `r hu(use_tab$mc_se[1])`), consistent with nominal 0.05; with a reference SD of 0.03 against data with SD 0.08 it is `r hu(r_tight)`, and with broad synergy of 0.08 and the right reference the power is `r hu(r_pow)`. In design P, treating the noisy reported curves as exact gives `r hu(rP[["exact"]])`, while redrawing them as means of four replicates gives `r hu(rP[["redrawn"]])` (standard error `r hu(sqrt(rP[["redrawn"]] * (1 - rP[["redrawn"]]) / 600))`), which is `r sprintf("%.1f", (rP[["redrawn"]] - 0.05) / sqrt(0.05 * 0.95 / 600))` standard errors above 0.05 for a 600-dataset run under the null, so a run of this size cannot separate it from nominal. The plug-in is approximate, and the 20,000-dataset re-estimate of the worst design-P cell in Table S1 is `r hu(s1$P$conf$rate, 4)`, slightly above nominal.
+
+For a screen, `sir_screen()` applies the same fit to many matrices with false-discovery control within declared families; the reference noise comes from `sir_noise_parametric()`, `sir_sd_curve()`, `sir_sd_from_replicates()` or `sir_noise_bank()`, and plate shifts enter through `plate_shift_ratio` of the noise constructor or through `plate_var`. The vignette `getting-started` walks through those calls.
+
+# Conclusions
+
+**What we found.** At exact Bliss, with a reference that reproduces the noise of the plate, the SIR statistic rejects at close to its nominal level: the worst re-estimated cells are `r hu(s1$S$conf$rate, 4)` in design S and `r hu(s1$P$conf$rate, 4)` in design P at level 0.05, `r hu(getn("oneil", "p_tstd", 0.05)$rate, 4)` on real O'Neil residuals, and no antagonistic surface, including `r nss$climbs` hill climbs, raised the rate above exact Bliss. The reference must carry the single-agent uncertainty, the plate shift, the replicate structure and the SD curve; omitting the single-agent noise raised the per-matrix rate to `r hu(pm_R0[1])` at $m_s=1$ and the probability of a false BH call in a 190-pair all-null cell line to `r hu(fw_R0[1])`, and omitting a plate shift of $\tau/\sigma=0.5$ raised the rate to `r hu(sh_without[4])`. Power depends on the pattern: the scan and the SIR statistic for localized and block synergy, the mean test for broad synergy, and design S is limited by single-agent noise, with thresholds for broad synergy of `r hu(eS[1])` to `r hu(eS[5])` mean excess against `r hu(eP[1])` to `r hu(eP[5])` in design P. The Berger-Boos search kept its level but retained between `r hu(summ[ms == 1]$ratio_bb, 2)` and `r hu(summ[ms == 64]$ratio_bb, 2)` of the oracle power as $m_s$ grew from 1 to 64.
+
+**What it means.** The calibration of the test is a property of the reference, and the user's task is to supply a noise model that reproduces the replicate structure of the assay. The theorem explains why exact Bliss is the right place to simulate, and the simulations show how much of the guarantee survives when the unknown curves and noise parameters are replaced by estimates.
+
+**Limits, as stated in the paper.** The plug-in p-value is approximate and its calibration rests on the simulations and real-noise checks reported here (design P is slightly above nominal in its worst cell). The least-favorable-null result needs the monotone-noise condition and covers replicate means and other summaries nondecreasing in each replicate; the outlier screen is not such a summary, and its level is measured separately. On single ALMANAC plates the SIR statistic is conservative at 0.05 but above nominal at 0.01 and 0.005, so claims on those plates are made at level 0.05 only. The Berger-Boos search gives a lower bound on a supremum, so its p-value is empirically conservative and is used as a sensitivity analysis for designs with at least 16 single-agent replicates. The design-S power thresholds hold for a test that is itself conservative there.
+
+**What to report.** The design (S, R or P), how the noise model (SD curve, tails, plate-shift variance) was estimated, the number of replicate curves behind reported single agents, the number of reference plates and the second-stage plates, the level at which claims are made, and the effect scale (mean Bliss excess on viability) with the planning thresholds of Table S7 for the grid used.
+
+# Paper numbers recomputed in this notebook
+
+```{r paper-checks}
+chk$paper_txt <- mapply(function(x, d) formatC(x, format = "f", digits = d), chk$paper, chk$digits)
+chk$computed_txt <- mapply(function(x, d) formatC(x, format = "f", digits = d + 2), chk$computed, chk$digits)
+tbl(data.frame(number = chk$item, paper = chk$paper_txt, computed = chk$computed_txt,
+               agrees = ifelse(chk$match, "yes", "NO")), row.names = FALSE) %>%
+  row_spec(which(!chk$match), bold = TRUE, color = "white", background = "#b22222")
+cat(sum(chk$match), "of", nrow(chk), "numbers agree with the paper at the printed precision.\n")
+```

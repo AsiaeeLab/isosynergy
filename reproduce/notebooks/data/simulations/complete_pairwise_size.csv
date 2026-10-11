@@ -1,0 +1,11 @@
+single_agent_log_spread,control_noise,n,size_demidenko_miller
+0.0,True,20000,0.0496
+0.0,False,20000,0.0496
+0.25,True,20000,0.01195
+0.25,False,20000,0.0113
+0.5,True,20000,0.00025
+0.5,False,20000,0.00035
+1.0,True,20000,0.0
+1.0,False,20000,0.0
+2.0,True,20000,0.0
+2.0,False,20000,0.0

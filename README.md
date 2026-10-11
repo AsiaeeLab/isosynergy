@@ -142,11 +142,13 @@ bash reproduce/run_all.sh --workers 16           # full run
 The last stage recomputes the reported numbers from the released per-unit table and
 the stage outputs and exits with an error on any mismatch. `reproduce/README.md` lists
 requirements, stage times and the map from paper items to scripts. The per-unit
-DrugCombDB results (`dataset_release/`) are deposited on Zenodo.
+DrugCombDB results (`dataset_release/`) are deposited on Zenodo
+([10.5281/zenodo.23302266](https://doi.org/10.5281/zenodo.23302266)).
 
 ## Citation
 
-See `CITATION.cff`. Released versions are archived on Zenodo (concept DOI
+See `CITATION.cff`. Released versions are archived on Zenodo (version 0.2.0:
+[10.5281/zenodo.23302246](https://doi.org/10.5281/zenodo.23302246); all versions:
 [10.5281/zenodo.20604671](https://doi.org/10.5281/zenodo.20604671)).
 
 ## License

@@ -1,0 +1,594 @@
+---
+title: "How SIR works on one dose-response matrix"
+subtitle: "Main Figure 2: temozolomide + MK-4827 in EFM192B (O'Neil screen, batch 0), and a guide to the R package"
+author: "SIR authors"
+date: "`r format(Sys.Date(), '%B %d, %Y')`"
+output:
+  html_document:
+    theme: flatly
+    toc: true
+    toc_float:
+      collapsed: false
+    toc_depth: 3
+    number_sections: true
+    code_folding: hide
+    fig_width: 9
+    fig_height: 5
+    df_print: kable
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE, comment = "#>",
+                      fig.align = "center", dpi = 110)
+source("_common.R")
+suppressPackageStartupMessages({
+  library(SIR); library(dplyr); library(tidyr); library(patchwork); library(reticulate)
+})
+options(width = 110)
+knitr::knit_hooks$set(inline = function(x) {
+  if (is.numeric(x)) format(x, digits = 4, scientific = FALSE, big.mark = if (all(x == round(x)) && all(abs(x) >= 1000)) "," else "") else as.character(x)
+})
+theme_report <- theme_report + theme(plot.title = element_text(face = "bold", size = 10), legend.position = "none")
+theme_set(theme_report)
+kb <- function(x, digits = 3, ...) kbl_report(x, digits = digits, ...)
+UNIT <- "TEMOZOLOMIDE|MK-4827|EFM192B|batch0"
+```
+
+# Summary
+
+```{r summary-numbers, include=FALSE}
+rel <- py_to_r(import("pandas")$read_parquet(release_table_path()))
+r1 <- rel[rel$unit_id == UNIT, ]
+fam <- rel[rel$family == r1$family, ]
+n_fam <- nrow(fam); n_bh <- sum(fam$q_tstd <= 0.05)
+```
+
+**SIR asks one question of a dose-response matrix: does any combination cell kill more cells than the two drugs would kill acting independently (Bliss), once measurement noise is accounted for?** For temozolomide + MK-4827 in EFM192B the answer is a clear yes: the SIR statistic is `r sprintf("%.1f", r1$t_std)` against a null simulated at exact Bliss, the smallest p-value the 9,999-draw reference can give (`r r1$p_tstd`), and the block-level companion test of mean excess agrees (mean excess `r sprintf("%.3f", r1$mean_excess)`, SE `r sprintf("%.3f", r1$mean_excess_se)`).
+
+This notebook (i) derives each step of the method with intuition first and then the formula, (ii) redraws main Figure 2 in R from the released per-matrix table and the four raw plates of this matrix, and rebuilds its numbers, and (iii) shows how to call the same method from the `SIR` R package.
+
+```{r key-numbers}
+data.frame(
+  Quantity = c("SIR statistic (T_SIR, field t_std)", "p-value (primary test, p_tstd)",
+               "Mean Bliss excess (SE)", "Companion test p-value (p_mean)", "Activity",
+               "Declared family (cell line, batch)", "Matrices in the family", "BH calls at q = 0.05"),
+  Value = c(sprintf("%.1f", r1$t_std), format(r1$p_tstd), sprintf("%.3f (%.3f)", r1$mean_excess, r1$mean_excess_se),
+            sprintf("%.2g", r1$p_companion), sprintf("%.3f", r1$activity), r1$family, n_fam, n_bh)
+) |> kb()
+```
+
+# The question
+
+## Background
+
+A drug combination is *synergistic* when the two drugs together do more than expected from each one alone. "Expected" needs a reference model, and several are in use (Highest Single Agent, Bliss, Loewe, ZIP; the companion notebook `02_baseline_disagreement` shows how much they disagree). A combination screen measures cell viability on a grid of doses: the first row and column hold each drug alone (with the untreated control at the corner), and the interior holds the combinations. A typical O'Neil matrix is $5 \times 5$, averaged here over four replicate plates.
+
+We use Bliss independence on mean viability. If drug A alone leaves a fraction $a_i$ of cells alive at dose $i$ and drug B alone leaves $b_j$ at dose $j$, then two drugs acting independently leave the product,
+
+$$\mathbb{E}\,Y_{ij} \;=\; \mathbb{E}\,Y_{i0}\,\mathbb{E}\,Y_{0j} \;=\; a_i\, b_j \qquad (i, j \ge 1).$$
+
+> **Question.** For one dose-response matrix, can we test whether any combination cell is more lethal than Bliss independence predicts, with a p-value whose error rate is known, a statement of where the synergy sits, and an estimate of how large it is?
+
+## Why it is hard
+
+* Every well is noisy, and the Bliss prediction is itself built from noisy single-agent wells, so a raw difference "observed minus predicted" is positive in about half of the cells even when there is no synergy.
+* Taking the largest of many noisy cell differences inflates false positives; averaging them hides synergy that is confined to a few cells.
+* A screen has hundreds or thousands of matrices, so p-values must be combined across tests with a stated error rate.
+* Parametric curve fits (for example four-parameter logistic fits) can fail on real data, and a failed fit produces no score at all.
+
+SIR replaces curve fits by shape-constrained (isotonic) regression, and calibrates its statistic by simulation at the one null surface that is hardest to reject.
+
+# The method and the math
+
+Index doses of drug A by $i = 0, \dots, I-1$ and of drug B by $j = 0, \dots, J-1$, with index 0 for zero dose. Let $\mu_{ij} = \mathbb{E}\,Y_{ij}$ with the control normalized so that $\mu_{00} = 1$, and let $a_i = \mu_{i0}$ and $b_j = \mu_{0j}$ be the single-agent curves. There are $r = (I-1)(J-1)$ combination cells.
+
+## Bliss independence, and why monotone single agents give a monotone Bliss surface
+
+*Intuition.* If the drugs act independently, each kills its own fraction regardless of the other, so viability multiplies. On the log scale the multiplication becomes addition: $\log \mu_{ij} = \log a_i + \log b_j$, a surface with no interaction term. Bliss is therefore the "additive, no-interaction" surface, expressed for viability.
+
+*Formula.* Because $a$ and $b$ are nonincreasing in dose (more drug, fewer living cells) and nonnegative, the product $a_i b_j$ is nonincreasing in each dose:
+
+$$a_0 \ge a_1 \ge \dots \ge 0,\quad b_0 \ge b_1 \ge \dots \ge 0 \;\Longrightarrow\; a_i b_j \ge a_{i+1} b_j \ \text{and}\ a_i b_j \ge a_i b_{j+1}.$$
+
+So the Bliss surface of monotone single agents lies inside the set $\mathcal{M}$ of all surfaces that are nonincreasing in each dose. The same shape constraint governs the single agents and the combination surface. This is why one tool, isotonic regression, fits both without any parametric curve.
+
+## Isotonic fits: pool adjacent violators
+
+*Intuition.* Isotonic regression returns the monotone curve closest to the data in least squares. Whenever two neighbors break the order (a point that should be lower is higher), the algorithm replaces both by their average and checks again. That averaging of "violators" is pool-adjacent-violators (PAVA).
+
+*Formulas.* The single-agent curves are one-dimensional nonincreasing fits of the single-agent wells at nonzero doses,
+
+$$\hat a = \mathrm{Iso}(Y_{10}, \dots, Y_{I-1,0}), \qquad \hat b = \mathrm{Iso}(Y_{01}, \dots, Y_{0,J-1}),$$
+
+and the surface is the two-dimensional isotonic fit of all wells (computed by Dykstra's algorithm),
+
+$$\hat\mu \;=\; \arg\min_{\theta \in \mathcal{M}} \sum_{i,j} (Y_{ij} - \theta_{ij})^2 .$$
+
+The Bliss prediction always uses the one-dimensional fits $\hat a, \hat b$, never the edges of $\hat\mu$.
+
+## The excess map and the SIR statistic
+
+The estimated Bliss excess is positive where the combination kills more than Bliss predicts,
+
+$$\hat\eta_{ij} \;=\; \hat a_i \hat b_j - \hat\mu_{ij} \qquad (i, j \ge 1).$$
+
+The primary null hypothesis is that no cell is synergistic, $H_0^{\mathrm{any}}: \eta_{ij} \le 0$ for all $i, j \ge 1$. The SIR statistic sums the squared positive standardized excess,
+
+$$T_{\mathrm{SIR}} \;=\; \sum_{i,j \ge 1} \left( \frac{\hat a_i \hat b_j - \hat\mu_{ij}}{s(\hat a_i \hat b_j)} \right)_+^{2},$$
+
+where $s(m)$ is the noise SD of a single well at mean viability $m$, evaluated at the Bliss prediction so that the standardization depends only on single-agent wells. Only positive excess counts, so antagonism cannot offset synergy. (In the package the field holding this number is `t_std`.)
+
+## Calibration: the least-favorable null and the plug-in bootstrap
+
+*Intuition.* Among all surfaces with no synergistic cell, the exact Bliss surface is the hardest to reject. If one combination well is less killed than Bliss predicts (antagonism), its fitted value can only rise, so the isotonic fit cannot fall and the excess can only shrink. Hence $T_{\mathrm{SIR}}$ under any non-synergistic surface is stochastically no larger than under exact Bliss with the same single-agent curves and noise. A test calibrated at exact Bliss with the *true* single-agent curves and noise law therefore has level at most $\alpha$ over the whole null $H_0^{\mathrm{any}}$. The guarantee covers replicate means and other replicate summaries that are nondecreasing in each replicate; it does not cover the replicate screen. The package's plug-in bootstrap (below) substitutes estimated curves and a chosen noise model for the true ones, so its p-values are approximate: their calibration is checked by simulation and on real noise, not claimed exactly.
+
+*Procedure.* Draw $B$ reference plates from the surface $\hat a_i \hat b_j$ with the noise model (re-estimating the single-agent fits on every plate, adding the plate shift, and averaging the same number of replicates as the data), compute $T^\ast_b$ with the identical pipeline, and set
+
+$$p \;=\; \frac{1 + \#\{b : T^\ast_b \ge T_{\mathrm{SIR}}\}}{B + 1}.$$
+
+The smallest attainable value is $1/(B+1)$. Each matrix is first tested with $B = 399$; matrices with $p \le 0.05$ are retested with $B = 9{,}999$ fresh plates (two-stage Monte Carlo). The plug-in reference substitutes estimates for the true curves, so the p-values are approximate and their calibration is checked by simulation and on real noise rather than claimed exactly.
+
+## Companion mean-excess test
+
+The weaker null $H_0^{\mathrm{mean}}: B \le 0$, with $B = r^{-1}\sum_{i,j\ge1}(a_i b_j - \mu_{ij})$, targets synergy spread over the whole grid and lets antagonism in some cells offset synergy in others. It uses the raw mean excess $\hat B = r^{-1}\sum_{i,j \ge 1}(Y_{i0}Y_{0j} - Y_{ij})$. With $m$ replicate plates sharing one design, each plate gives its own mean excess $\hat B_k$ and the block-level $t$ test applies to those $m$ numbers:
+
+$$t = \frac{\bar B}{\mathrm{SE}}, \quad \bar B = \frac1m\sum_k \hat B_k, \quad \mathrm{SE} = \frac{\mathrm{sd}(\hat B_1,\dots,\hat B_m)}{\sqrt m}, \quad m - 1 \text{ degrees of freedom}.$$
+
+## Region scan
+
+To say where synergy sits, the scan considers a fixed family of regions: the high-dose rectangles $[i_0, I-1] \times [j_0, J-1]$ and all $2 \times 2$ blocks (24 regions on a $5\times5$ grid). For region $U$ the statistic is the raw-well sum $T_U = \sum_{(i,j)\in U}(Y_{i0}Y_{0j} - Y_{ij})$, standardized by its mean and SD over 200 separate reference plates at exact Bliss. A region is claimed when its standardized statistic exceeds the bootstrap quantile of the maximum over the family, which controls the familywise error rate. A claim says the region contains at least one synergistic cell.
+
+## Activity, and Benjamini-Hochberg within a declared family
+
+Activity is the mean kill over the combination cells, $\mathrm{Act} = r^{-1}\sum_{i,j\ge1}(1 - Y_{ij})$. It splits exactly into the part the single agents explain and the part attributed to the combination,
+
+$$\mathrm{Act} = \underbrace{r^{-1}\sum_{i,j\ge1}(1 - Y_{i0}Y_{0j})}_{\text{Bliss-expected activity}} + \hat B .$$
+
+Screens are analyzed in declared families (here the cell line within a batch). Within a family of $N$ tests with ordered p-values $p_{(1)} \le \dots \le p_{(N)}$, Benjamini-Hochberg (BH) calls the $R$ smallest, where $R = \max\{k : p_{(k)} \le qk/N\}$. Reaching $R$ discoveries at level $q$ needs $B \ge N/(qR) - 1$ reference draws.
+
+# The data
+
+The example matrix is the mean of four replicate plates, with temozolomide (drug A, rows) and MK-4827 (drug B, columns). The raw plates are cached in `data/realdata/oneil_unit_plates.csv` (the four plates of this matrix, extracted from the pipeline's O'Neil input array); the per-matrix results are in the released table.
+
+```{r load-data}
+pl <- read_result("realdata/oneil_unit_plates.csv")
+stopifnot(identical(unique(pl$unit_id), UNIT))
+Yraw <- array(NA_real_, c(4, 5, 5)); Yraw[cbind(pl$plate, pl$row, pl$col)] <- pl$viability_raw
+dA <- sort(unique(pl$dose_row)); dB <- sort(unique(pl$dose_col))
+Y <- Yraw
+for (k in seq_len(dim(Y)[1])) Y[k, , ] <- Y[k, , ] / Y[k, 1, 1]   # normalize each plate to its control
+Ym <- apply(Y, c(2, 3), mean)
+cat("Plates x rows x cols of this unit:", paste(dim(Y), collapse = " x "), "\n")
+cat("Dose grid, temozolomide (uM):", dA, "\nDose grid, MK-4827 (uM):", dB, "\n")
+dimnames(Ym) <- list(paste0("TMZ ", dA), paste0("MK ", dB))
+kb(Ym, caption = "Mean viability over the four plates (rows: temozolomide dose; columns: MK-4827 dose).")
+```
+
+The released table must give the family counts quoted in the paper (583 matrices in the family, 252 BH calls).
+
+```{r sanity}
+chk <- data.frame(
+  Check = c("O'Neil units in the released table", "Units in this family", "BH calls in this family (q_tstd <= 0.05)",
+            "Controls of the four plates before normalizing"),
+  Value = c(sum(rel$study == "ONEIL"), n_fam, n_bh, paste(format(Yraw[, 1, 1], digits = 4), collapse = ", ")))
+kb(chk)
+```
+
+`reproduce/MANIFEST.md` lists the same family size (583) and call count (252) for Figure 2.
+
+The unit is a $5 \times 5$ grid measured on four plates, the released table holds `r sum(rel$study == "ONEIL")` O'Neil matrices, and the family of this matrix has `r n_fam` matrices with `r n_bh` BH calls, as the paper states. Temozolomide alone shows no dose-dependent kill (its single-agent viabilities rise from `r sprintf("%.3f", Ym[2, 1])` to `r sprintf("%.3f", Ym[5, 1])`), while MK-4827 alone lowers viability to `r sprintf("%.3f", Ym[1, 5])` at 10 uM. Viability in the combination block falls to `r sprintf("%.3f", min(Ym[-1, -1]))` at the highest doses.
+
+**Decision point.** The data are complete (no missing wells) and the controls are normalized, so no cleaning is needed. We go straight to the worked example.
+
+# Figure 2: the SIR procedure on one matrix
+
+## Rationale
+
+Figure 2 follows one matrix through every step: observed viability (A), the two one-dimensional isotonic fits (B), their product, the Bliss reference (C), the two-dimensional isotonic fit (D), the excess map (E), and the five quantities reported for each matrix (F). We draw each panel in R: panels A to E from the four plates and a package fit of this matrix, and the quantities of panel F from the released table. The assembled figure is at the end of this section, after each panel has been built and checked.
+
+**What do we see?** The released table gives the paper's numbers: $T_{\mathrm{SIR}} = `r sprintf("%.1f", r1$t_std)`$, $p = `r r1$p_tstd`$ from $B = `r r1$mc_B`$ reference plates, mean excess `r sprintf("%.3f", r1$mean_excess)` (SE `r sprintf("%.3f", r1$mean_excess_se)`), activity `r sprintf("%.3f", r1$activity)`, and a family of `r n_fam` matrices with `r n_bh` BH calls. The observed matrix (A) is nearly flat in the low-dose corner and falls steeply toward high doses of both drugs. The Bliss reference (C) is almost flat because the single agents alone remove little viability (B), while the fitted surface (D) falls to about 0.2, so the excess map (E) is positive over the whole interior with a block of large excess at high doses (outlined).
+
+## Panels A and B: observed viability and the single-agent fits (PAVA)
+
+*Rationale.* Panel B shows why isotonic regression is needed. Temozolomide alone barely kills in this dose range, and its observed viabilities are not monotone; the fit pools them. We write PAVA in a few lines of R and check it against `stats::isoreg` and against the package's `a_hat`.
+
+```{r pava}
+pava_dec <- function(y) {                      # nonincreasing least-squares fit, equal weights
+  blocks <- list()
+  for (v in y) {
+    blocks[[length(blocks) + 1]] <- list(sum = v, n = 1)
+    while (length(blocks) > 1) {
+      k <- length(blocks)
+      if (blocks[[k - 1]]$sum / blocks[[k - 1]]$n < blocks[[k]]$sum / blocks[[k]]$n) {   # increase = violation
+        blocks[[k - 1]] <- list(sum = blocks[[k - 1]]$sum + blocks[[k]]$sum, n = blocks[[k - 1]]$n + blocks[[k]]$n)
+        blocks[[k]] <- NULL
+      } else break
+    }
+  }
+  unlist(lapply(blocks, function(b) rep(b$sum / b$n, b$n)))
+}
+
+fit <- sir_fit(Y, doses = list(dA, dB), design = "P", noise = sir_noise_parametric("oneil"), seed = 2026)
+
+yA <- Ym[-1, 1]; yB <- Ym[1, -1]
+tab <- data.frame(
+  dose_index = 1:4,
+  TMZ_observed = yA, TMZ_PAVA = pava_dec(yA), TMZ_isoreg = -stats::isoreg(-yA)$yf, TMZ_package = as.numeric(fit$a_hat),
+  MK_observed = yB, MK_PAVA = pava_dec(yB), MK_package = as.numeric(fit$b_hat))
+kb(tab[, c("dose_index", "TMZ_observed", "TMZ_PAVA", "TMZ_isoreg", "TMZ_package", "MK_observed", "MK_PAVA", "MK_package")],
+   caption = "Single-agent wells and their nonincreasing isotonic fits.")
+cat("max |PAVA - package|:", format(max(abs(pava_dec(yA) - fit$a_hat), abs(pava_dec(yB) - fit$b_hat)), digits = 3), "\n")
+```
+
+```{r panelB, fig.height=3.6, fig.cap="Panel B rebuilt: single-agent wells (points) and isotonic fits (steps)."}
+dfB <- bind_rows(
+  data.frame(drug = "temozolomide", idx = 1:4, obs = yA, fit = as.numeric(fit$a_hat)),
+  data.frame(drug = "MK-4827", idx = 1:4, obs = yB, fit = as.numeric(fit$b_hat)))
+ggplot(dfB, aes(idx, colour = drug)) +
+  geom_hline(yintercept = 1, linetype = "dotted", colour = "grey55") +
+  geom_point(aes(y = obs), alpha = 0.6) + geom_step(aes(y = fit), direction = "mid", linewidth = 1) +
+  scale_colour_manual(values = c(temozolomide = "#b2182b", "MK-4827" = "#2166ac")) +
+  labs(x = "Dose index (alone)", y = "Viability", colour = NULL)
+```
+
+**What do we see?** The temozolomide wells rise with dose (`r paste(sprintf("%.3f", yA), collapse = ", ")`), the opposite of the order isotonic regression allows, so PAVA pools all four into one level, their mean `r sprintf("%.3f", mean(yA))`, which is the step in panel B. The MK-4827 wells (`r paste(sprintf("%.3f", yB), collapse = ", ")`) are already nonincreasing and are returned unchanged. Our R implementation, `stats::isoreg` and the package's `a_hat`, `b_hat` agree to `r format(max(abs(pava_dec(yA) - fit$a_hat), abs(pava_dec(yB) - fit$b_hat)), digits = 2)`.
+
+## Panels C, D, E: Bliss reference, isotonic surface and excess
+
+*Rationale.* The Bliss reference is the outer product of the two fitted curves; the surface fit is the two-dimensional isotonic regression of the whole matrix; their difference is the excess map.
+
+```{r maps, fig.height=3.4, fig.width=11, fig.cap="Panels A, C, D, E rebuilt in R."}
+a_hat <- c(1, as.numeric(fit$a_hat)); b_hat <- c(1, as.numeric(fit$b_hat))
+bliss <- outer(a_hat, b_hat)
+mu_hat <- fit$fitted_surface
+eta <- fit$excess_map
+heat <- function(M, title, lim, pal, mid = NULL) {
+  d <- expand.grid(i = seq_len(nrow(M)) - 1, j = seq_len(ncol(M)) - 1); d$v <- as.vector(M)
+  p <- ggplot(d, aes(j, i, fill = v)) + geom_tile(colour = "white") + coord_equal() +
+    geom_text(aes(label = sprintf("%.2f", v)), size = 2.6) + labs(title = title, x = "MK-4827 dose index", y = "TMZ dose index")
+  if (is.null(mid)) p + scale_fill_gradientn(colours = pal, limits = lim, guide = "none")
+  else p + scale_fill_gradientn(colours = pal, limits = lim, guide = "none")
+}
+eta_full <- matrix(NA_real_, nrow(mu_hat), ncol(mu_hat)); eta_full[-1, -1] <- eta
+pal_v <- rev(hcl.colors(9, "YlGnBu")); pal_e <- c("#2166ac", "white", "#b2182b")
+heat(Ym, "A. Observed viability Y", c(0, 1.15), pal_v) + heat(bliss, "C. Bliss reference", c(0, 1.15), pal_v) +
+  heat(mu_hat, "D. Isotonic surface", c(0, 1.15), pal_v) + heat(eta_full, "E. Excess (C minus D)", c(-0.85, 0.85), pal_e) +
+  plot_layout(nrow = 1)
+```
+
+Two checks that the maps are what the formulas say:
+
+```{r maps-check}
+data.frame(
+  Check = c("excess_map equals a_hat * b_hat - fitted_surface on the interior",
+            "fitted surface is nonincreasing in both doses",
+            "largest excess cell", "smallest excess cell"),
+  Result = c(format(max(abs(eta - (bliss - mu_hat)[-1, -1])), digits = 3),
+             all(diff(mu_hat) <= 1e-9) && all(diff(t(mu_hat)) <= 1e-9),
+             sprintf("%.3f at TMZ index %d, MK index %d", max(eta), which(eta == max(eta), arr.ind = TRUE)[1], which(eta == max(eta), arr.ind = TRUE)[2]),
+             sprintf("%.3f", min(eta)))) |> kb()
+```
+
+**What do we see?** The excess is positive in every one of the `r length(eta)` interior cells (smallest `r sprintf("%.3f", min(eta))`, largest `r sprintf("%.3f", max(eta))`) and grows toward high doses of both drugs; the largest value sits at the top temozolomide dose and the third MK-4827 dose. The isotonic surface has flat plateaus where neighboring wells violated the order, and its zero-dose edges (`r sprintf("%.3f", mu_hat[2, 1])` for temozolomide) differ slightly from the one-dimensional fits used in the Bliss reference, which is why the reference never takes its edges from $\hat\mu$. Because every cell is positive, the excess map is not the evidence for synergy by itself; it is a description, and the test and the scan provide the error-controlled statements.
+
+## Panel F, card 1: the SIR statistic and its reference distribution
+
+*Rationale.* We compute $T_{\mathrm{SIR}}$ directly from the formula and compare with the package value. The SD curve $s(\cdot)$ is the built-in O'Neil single-replicate curve.
+
+```{r tsir-hand}
+sdc <- sir_sd_curve("oneil")
+s_at_bliss <- as.numeric(sdc(bliss[-1, -1]))
+T_hand <- sum(pmax(eta / s_at_bliss, 0)^2)
+data.frame(Source = c("By hand from the formula", "Package fit (t_std)", "Released table (t_std)"),
+           T_SIR = c(T_hand, fit$t_std, r1$t_std)) |> kb(digits = 4)
+```
+
+*Reference distribution.* The p-value counts reference statistics at least as large as the observed one. With $B = 9{,}999$ and no reference draw reaching 263, the p-value is the floor $1/(B+1)$:
+
+```{r pvalue-floor}
+data.frame(
+  Quantity = c("B used in final stage", "1 / (B + 1)", "p_tstd, package fit", "p_tstd, released table",
+               "Stage-one p (B = 399), package fit", "Smallest stage-one p, 1 / 400"),
+  Value = c(fit$B_used, 1 / (fit$B_used + 1), fit$p_tstd, r1$p_tstd, fit$p_tstd_stage1, 1 / 400)) |> kb(digits = 5)
+```
+
+The 9,999 reference statistics of the production analysis are saved by the pipeline (`simulations/fig2_reference_tsir.csv`). Their distribution shows how far the observed value lies from what exact Bliss produces with this matrix's noise:
+
+```{r tsir-reference, fig.height=3.6, fig.cap="Reference distribution of the SIR statistic at exact Bliss (positive values, log axis) and the observed value (red)."}
+Tref <- read_result("simulations/fig2_reference_tsir.csv")$t_sir_reference
+ref_tab <- data.frame(Quantity = c("Reference draws", "Share exactly zero", "Median", "99th percentile", "Largest", "Observed"),
+                      Value = c(length(Tref), mean(Tref == 0), median(Tref), quantile(Tref, 0.99), max(Tref), T_hand))
+kb(ref_tab, digits = 3)
+ggplot(data.frame(t = Tref[Tref > 0]), aes(t)) +
+  geom_histogram(bins = 45, fill = "grey60") + geom_vline(xintercept = T_hand, colour = "#b2182b", linewidth = 1) +
+  scale_x_log10() + labs(x = expression(T[SIR]~"(log scale)"), y = "Reference draws") + theme_report
+```
+
+The reference draws have median `r sprintf("%.2f", median(Tref))` and maximum `r sprintf("%.1f", max(Tref))`, so the observed `r sprintf("%.1f", T_hand)` lies far beyond every draw; `r sprintf("%.1f", 100 * mean(Tref == 0))`% of the draws are exactly zero (no positive excess anywhere) and cannot be shown on the log axis.
+
+The production analysis of this matrix uses a residual noise bank (O'Neil replicate residuals, cross-fitted by cell line) and holds the reported single-agent curves fixed; the package fit above uses the parametric O'Neil SD curve. The statistic is identical (it depends only on the data and the SD curve) and both p-values sit at the floor of their reference size.
+
+**What do we see?** The formula, the package fit and the released table give $T_{\mathrm{SIR}} = `r sprintf("%.4f", T_hand)`$, to four decimals. The stage-one p-value is its floor, `r fit$p_tstd_stage1`, because no draw out of 399 exceeds the observed value, which triggers the second stage; there the floor is `r 1 / (fit$B_used + 1)` and is again attained. The p-value is therefore best read as "below 1e-4", not as an estimate of a particular tiny number.
+
+### The least-favorable null, checked by simulation
+
+*Rationale.* The theory says exact Bliss is the hardest non-synergistic surface to reject. We check this with the package on small $5 \times 5$ plates (design S, additive Gaussian noise with SD 0.06, $B = 199$ draws, single stage, 300 plates per scenario). Exact Bliss should reject at about 5%; a surface that is antagonistic in the high-dose block (more viability than Bliss) should reject less; a synergistic surface should reject often. This is a small illustration, not the paper's calibration study.
+
+```{r lfn, cache = FALSE}
+set.seed(7)
+d5 <- c(0, 0.1, 0.3, 1, 3)
+a0 <- c(1, 0.95, 0.8, 0.55, 0.3); b0 <- c(1, 0.9, 0.7, 0.45, 0.25)
+base <- outer(a0, b0)
+shift <- matrix(0, 5, 5)
+make <- function(delta) { M <- base; M[3:5, 3:5] <- M[3:5, 3:5] + delta; M }
+scen <- list("Antagonistic block (+0.10)" = make(0.10), "Exact Bliss" = base, "Synergistic block (-0.10)" = make(-0.10))
+noise6 <- sir_noise_parametric(sd = 0.06)
+nrep <- 300
+pv <- lapply(seq_along(scen), function(s) vapply(seq_len(nrep), function(r) {
+  Yr <- scen[[s]] + matrix(rnorm(25, sd = 0.06), 5); Yr[1, 1] <- 1
+  sir_fit(Yr, doses = list(d5, d5), design = "S", noise = noise6, B = 199, two_stage = FALSE,
+          seed = 1000 * s + r, fragility = "never")$p_tstd
+}, numeric(1)))
+names(pv) <- names(scen)
+lfn <- data.frame(Scenario = names(pv), `Rejection rate at 0.05` = vapply(pv, function(p) mean(p <= 0.05), numeric(1)),
+                  `Monte Carlo SE` = vapply(pv, function(p) sqrt(mean(p <= 0.05) * (1 - mean(p <= 0.05)) / length(p)), numeric(1)),
+                  check.names = FALSE)
+kb(lfn, digits = 3, row.names = FALSE)
+```
+
+**What do we see?** Exact Bliss rejects at `r sprintf("%.3f", lfn[2, 2])` (Monte Carlo SE `r sprintf("%.3f", lfn[2, 3])`), consistent with the nominal 0.05. The antagonistic block, which lies strictly inside the null, rejects at `r sprintf("%.3f", lfn[1, 2])`, below exact Bliss, as the least-favorable-null argument requires. The synergistic block is detected in `r sprintf("%.0f", 100 * lfn[3, 2])`% of plates. This is one small scenario; the paper's calibration studies cover many more.
+
+## Panel F, card 2: the region scan
+
+The scan runs on every matrix, independently of the primary test. The production result for this unit, from the released table:
+
+```{r scan}
+reg <- r1[, c("p_scan", "top_region", "top_region_type", "top_region_z", "top_region_p_adj")]
+kb(reg, digits = 4, row.names = FALSE, caption = "Region scan for this matrix (cell indices are zero-based in the original grid).")
+top <- do.call(rbind, lapply(strsplit(strsplit(r1$top_region, ";")[[1]], ","), as.integer))
+cat("Top region covers TMZ dose indices", paste(range(top[, 1]), collapse = " to "),
+    "and MK-4827 dose indices", paste(range(top[, 2]), collapse = " to "), "(zero-based).\n")
+cat("Regions claimed by the package fit above:", length(fit$claims), "of", length(fit$regions), "in the family\n")
+```
+
+**What do we see?** The top region is the high-dose rectangle covering temozolomide dose indices `r paste(range(top[, 1]), collapse = " to ")` and MK-4827 indices `r paste(range(top[, 2]), collapse = " to ")` (`r nrow(top)` cells, the outlined block in panels E and F), with standardized statistic $z = `r sprintf("%.1f", r1$top_region_z)`$ and familywise-adjusted p-value `r r1$top_region_p_adj`, again at the 9,999-draw floor. The package fit with the parametric O'Neil SD curve claims `r length(fit$claims)` of the 24 regions; the production screen uses a residual noise bank for its reference, so its claim list can differ in the weaker regions, while the top region is the same. A claim says that its region contains at least one synergistic cell; it does not say which cell, nor anything about cells outside the region.
+
+## Panel F, card 3: the companion mean-excess test
+
+The raw mean excess of each of the four plates, then their $t$ test. We recompute everything from the cached plates and compare with the table.
+
+```{r companion}
+blk <- vapply(seq_len(dim(Y)[1]), function(k) {
+  P <- Y[k, , ]; mean((outer(P[, 1], P[1, ]) - P)[-1, -1]) }, numeric(1))
+m <- length(blk); B_bar <- mean(blk); se <- sd(blk) / sqrt(m)
+tt <- t.test(blk)
+half <- qt(0.975, m - 1) * se
+data.frame(Quantity = c(paste0("Plate ", 1:m, " mean excess"), "Mean excess", "SE", "t (3 df)", "p (two-sided)", "p (one-sided, upper)", "95% CI low", "95% CI high"),
+           Rebuilt = c(blk, B_bar, se, unname(tt$statistic), tt$p.value, pt(unname(tt$statistic), m - 1, lower.tail = FALSE), B_bar - half, B_bar + half),
+           Table = c(rep(NA, m), r1$mean_excess, r1$mean_excess_se, r1$companion_t, NA, r1$p_companion, NA, NA)) |> kb(digits = 5)
+```
+
+The released `companion_t` (`r sprintf("%.2f", r1$companion_t)`) and `p_companion` (`r sprintf("%.3g", r1$p_companion)`) match the upper-tail $t$ test on three degrees of freedom; the test name in the table is "`r r1$companion_test`".
+
+**What do we see?** The four plates give mean excesses between `r sprintf("%.3f", min(blk))` and `r sprintf("%.3f", max(blk))`, all far above zero, and their mean is `r sprintf("%.3f", B_bar)` with 95% CI `r sprintf("%.2f", B_bar - half)` to `r sprintf("%.2f", B_bar + half)` (the interval drawn in card 3). The test treats the plate-level means as the $m = `r m`$ independent observations, hence `r m - 1` degrees of freedom; $t = `r sprintf("%.1f", unname(tt$statistic))`$ and the upper-tail $p = `r sprintf("%.2g", pt(unname(tt$statistic), m - 1, lower.tail = FALSE))`$ reproduce the released `p_companion`. The two p-values come from different reference distributions (a $t$ distribution with three degrees of freedom here, the simulated exact-Bliss reference for the primary test) and answer different questions, so they need not be equal.
+
+## Panel F, card 4: activity
+
+```{r activity}
+act <- mean(1 - Ym[-1, -1])
+expected_act <- mean(1 - outer(Ym[-1, 1], Ym[1, -1]))
+data.frame(Quantity = c("Activity, mean(1 - Y) over combination cells", "Bliss-expected activity", "Mean Bliss excess B-hat", "Expected + excess", "Released activity"),
+           Value = c(act, expected_act, mean((outer(Ym[-1, 1], Ym[1, -1]) - Ym[-1, -1])), expected_act + mean((outer(Ym[-1, 1], Ym[1, -1]) - Ym[-1, -1])), r1$activity)) |> kb(digits = 4)
+```
+
+**What do we see?** Activity is `r sprintf("%.3f", act)`: on average about a third of the cells are killed over the combination block. The single agents explain essentially none of that (Bliss-expected activity `r sprintf("%.4f", expected_act)`, slightly negative because the fitted temozolomide curve sits above the control), so the whole activity is attributed to the combination, which equals the mean excess `r sprintf("%.3f", mean((outer(Ym[-1, 1], Ym[1, -1]) - Ym[-1, -1])))`. This is the exact decomposition given above. A matrix whose activity is mostly explained by the single agents would instead show a mean excess near zero.
+
+## Panel F, card 5: BH within the declared family
+
+```{r bh, fig.height=4, fig.cap="Card 5 rebuilt: the family's p-values in increasing order (blue: BH calls) against the BH line 0.05 k / N."}
+fm <- rel[rel$family == r1$family, ]
+N <- nrow(fm)
+q_bh <- p.adjust(fm$p_tstd, method = "BH")
+cat("Family:", r1$family, "| N =", N, "| BH calls =", sum(q_bh <= 0.05), "| max |q (R) - q (table)| =", format(max(abs(q_bh - fm$q_tstd)), digits = 3), "\n")
+cat("Required B for R =", sum(q_bh <= 0.05), "calls at q = 0.05:", ceiling(N / (0.05 * sum(q_bh <= 0.05)) - 1), "\n")
+cat("BH threshold for one discovery, 0.05 / N:", format(0.05 / N, digits = 3), "versus 1 / (B + 1) =", 1e-4, "\n")
+n_floor <- sum(fm$p_tstd <= 1 / 10000 + 1e-12); n_called <- sum(q_bh <= 0.05)
+cat("Matrices with p at the 9,999-draw floor (1e-4):", n_floor, "| matrices with p <= 0.05:", sum(fm$p_tstd <= 0.05), "\n")
+cat("q-value of this matrix: R", format(q_bh[fm$unit_id == UNIT], digits = 4), "| table", format(fm$q_tstd[fm$unit_id == UNIT], digits = 4), "\n")
+ps <- sort(fm$p_tstd); rk <- seq_len(N); called <- rk <= sum(q_bh <= 0.05)
+ggplot(data.frame(rk, ps, called), aes(rk, ps)) +
+  geom_line(aes(colour = called, group = 1), linewidth = 0.8) +
+  geom_line(aes(y = 0.05 * rk / N), colour = "#b2182b") +
+  geom_point(data = data.frame(rk = mean(range(which(ps == fm$p_tstd[fm$unit_id == UNIT]))), ps = fm$p_tstd[fm$unit_id == UNIT]),
+             colour = "#b2182b", size = 2.5) +
+  scale_y_log10() + scale_colour_manual(values = c(`TRUE` = "#2166ac", `FALSE` = "grey60"), guide = "none") +
+  labs(x = "Rank k", y = "p-value (log scale)")
+```
+
+**What do we see?** `r n_called` of the `r N` matrices in this cell line and batch are called at $q = 0.05$ (`r sprintf("%.0f", 100 * n_called / N)`%), and `r n_floor` of them have $p$ at the floor $10^{-4}$, so the blue curve starts as a long flat segment and ties are broken by BH's step-up rule. Our R `p.adjust(method = "BH")` reproduces the table's q-values to `r format(max(abs(q_bh - fm$q_tstd)), digits = 2)`; this matrix has $q = `r sprintf("%.4f", fm$q_tstd[fm$unit_id == UNIT])`$. With $R = `r n_called`$ calls, $B \ge N/(qR) - 1 = `r ceiling(N / (0.05 * n_called) - 1)`$ draws suffice; the second stage uses 9,999 so that p-values are continuous at the small end.
+
+## Figure 2, assembled
+
+Panels A to E use the four plates and the package fit above; panel F shows the five quantities reported for each matrix, from the released table and the plate-level calculations in the cards above. Card 1 shows the reference distribution of the SIR statistic (positive values, log axis) with the observed value in red.
+
+```{r fig2-assembled, fig.width=11, fig.height=9, fig.cap="Figure 2 redrawn in R: the SIR procedure on temozolomide + MK-4827 in EFM192B."}
+hm <- function(M, title, lim, pal, box = NULL, xlab = "MK-4827 dose index", ylab = NULL, text = TRUE) {
+  d <- expand.grid(i = seq_len(nrow(M)) - 1, j = seq_len(ncol(M)) - 1); d$v <- as.vector(M)
+  g <- ggplot(d, aes(j, i, fill = v)) + geom_tile(colour = "white") + coord_equal() +
+    scale_fill_gradientn(colours = pal, limits = lim, na.value = "grey92") + labs(title = title, x = xlab, y = ylab)
+  if (text) g <- g + geom_text(aes(label = ifelse(is.na(v), "", sprintf("%.2f", v))), size = 2.4)
+  if (!is.null(box)) g <- g + annotate("rect", xmin = box[1] - 0.5, xmax = box[2] + 0.5, ymin = box[3] - 0.5, ymax = box[4] + 0.5,
+                                       fill = NA, colour = "black", linewidth = 0.9)
+  g
+}
+rbox <- c(min(top[, 2]), max(top[, 2]), min(top[, 1]), max(top[, 1]))
+pA <- hm(Ym, "A. Observed viability", c(0, 1.15), pal_v, ylab = "Temozolomide dose index") +
+  annotate("rect", xmin = -0.5, xmax = 4.5, ymin = -0.5, ymax = 0.5, fill = NA, linetype = "dashed") +
+  annotate("rect", xmin = -0.5, xmax = 0.5, ymin = -0.5, ymax = 4.5, fill = NA, linetype = "dashed")
+pB <- ggplot(dfB, aes(idx, colour = drug)) + geom_hline(yintercept = 1, linetype = "dotted", colour = "grey55") +
+  geom_point(aes(y = obs), alpha = 0.6) + geom_step(aes(y = fit), direction = "mid", linewidth = 1) +
+  scale_colour_manual(values = c(temozolomide = "#b2182b", "MK-4827" = "#2166ac")) +
+  labs(title = expression(bold("B.")~"Single agents"~hat(a)*","~hat(b)), x = "Dose index alone", y = "Viability") + theme(legend.position = "bottom")
+pC <- hm(bliss, expression(bold("C.")~"Bliss reference"~hat(a)*hat(b)), c(0, 1.15), pal_v)
+pD <- hm(mu_hat, expression(bold("D.")~"Isotonic surface"~hat(mu)), c(0, 1.15), pal_v, ylab = "Temozolomide dose index")
+pE <- hm(eta_full, expression(bold("E.")~"Excess"~hat(eta)==hat(a)*hat(b)-hat(mu)), c(-0.85, 0.85), pal_e, box = rbox)
+ct <- theme(plot.title = element_text(size = 9, face = "bold"))
+c1 <- ggplot(data.frame(t = Tref[Tref > 0]), aes(t)) + geom_histogram(bins = 45, fill = "grey60") +
+  geom_vline(xintercept = T_hand, colour = "#b2182b", linewidth = 1) + scale_x_log10() +
+  labs(title = "F1. Synergy anywhere?", x = expression(T[SIR]~"(log scale)"), y = NULL) + ct + theme(axis.text.y = element_blank())
+c2 <- hm(fit$raw_excess_map[, ], "F2. Where? (scan)", c(-1.2, 1.2), pal_e, box = rbox - 1, xlab = NULL, text = FALSE) + ct +
+  theme(axis.text = element_blank())
+c3 <- ggplot() + geom_hline(yintercept = 0, linetype = "dotted") +
+  geom_point(data = data.frame(x = seq(-0.6, -0.2, length.out = m), y = blk), aes(x, y), colour = "grey50") +
+  geom_pointrange(data = data.frame(x = 0.5, y = B_bar, lo = B_bar - half, hi = B_bar + half), aes(x, y, ymin = lo, ymax = hi), colour = "#b2182b") +
+  coord_cartesian(xlim = c(-1, 1), ylim = c(-0.04, 0.46)) +
+  labs(title = "F3. On average?", x = NULL, y = "Mean excess") + ct + theme(axis.text.x = element_blank())
+c4 <- ggplot(data.frame(a = act), aes(a, 0)) + geom_col(fill = "#5e81b5", width = 0.5, orientation = "y") + xlim(0, 1) +
+  labs(title = "F4. How much killing?", x = "Activity", y = NULL) + ct + theme(axis.text.y = element_blank())
+rk <- seq_len(N)
+c5 <- ggplot(data.frame(rk, ps, called), aes(rk, ps)) + geom_line(aes(colour = called, group = 1)) + geom_line(aes(y = 0.05 * rk / N), colour = "#b2182b") +
+  geom_point(data = data.frame(rk = mean(range(which(ps == fm$p_tstd[fm$unit_id == UNIT]))), ps = fm$p_tstd[fm$unit_id == UNIT]), colour = "#b2182b", size = 2) +
+  scale_y_log10() + scale_colour_manual(values = c(`TRUE` = "#2166ac", `FALSE` = "grey60")) +
+  labs(title = "F5. Many matrices? (BH)", x = "Rank", y = "p-value") + ct
+((pA | pB | pC) / (pD | pE | plot_spacer()) / (c1 | c2 | c3 | c4 | c5)) + plot_layout(heights = c(1.1, 1.1, 0.8))
+```
+
+**Decision point.** Everything shown for this matrix is a call to one function, `sir_fit()`, and the family step is `sir_screen()`. The next section shows both on small examples.
+
+# How to use the package
+
+All examples below use `library(SIR)`, a small number of reference draws and fixed seeds, so each chunk runs in seconds. The defaults (`B = 399`, `B2 = 9999`, two stages) are what the paper uses. `sir_python_config()` reports the Python interpreter that runs the engine.
+
+## One synthetic matrix (design S)
+
+Rows and columns are ordered by increasing dose with zero first; the control is `Y[1, 1]` and equals one. Design `"S"` means the single agents were measured on the same plate.
+
+```{r use-S}
+set.seed(21)
+doses <- c(0, 0.1, 0.3, 1, 3)
+a <- c(1, 0.95, 0.8, 0.55, 0.3); b <- c(1, 0.9, 0.7, 0.45, 0.25)
+Ys <- outer(a, b) + matrix(rnorm(25, sd = 0.04), 5)
+Ys[1, 1] <- 1
+Ys[3:5, 3:5] <- Ys[3:5, 3:5] - 0.12          # synergy in the high-dose block
+noise <- sir_noise_parametric(sd = 0.04)       # additive Gaussian, SD 0.04 per well
+fit_s <- sir_fit(Ys, doses = list(doses, doses), design = "S", noise = noise, B = 399, B2 = 999, seed = 12)
+summary(fit_s)
+```
+
+In this simulation the SIR statistic is `r sprintf("%.1f", fit_s$t_std)` with $p =$ `r fit_s$p_tstd` (stage `r fit_s$stage`, $B =$ `r fit_s$B_used`; we set `B2 = 999` here to keep the example fast, so the floor is 0.001), the mean excess is `r sprintf("%.3f", fit_s$mean_excess)` (SE `r sprintf("%.3f", fit_s$mean_excess_se)`, companion $p =$ `r sprintf("%.3f", fit_s$p_mean)`), and `r length(fit_s$claims)` of `r length(fit_s$regions)` regions are claimed.
+
+`plot()` draws observed viability, the Bliss prediction (same color scale) and the isotonic excess (red where the combination kills more than Bliss predicts):
+
+```{r use-plot, fig.width=10, fig.height=3.6}
+plot(fit_s)
+```
+
+## A replicate stack (design R)
+
+Supply an array with dimensions `c(replicates, rows, columns)`. Design `"R"` measures the single agents on every plate and uses the block-level $t$ test as the companion.
+
+```{r use-R}
+set.seed(5)
+YR <- array(NA_real_, c(3, 5, 5))
+for (k in 1:3) { P <- outer(a, b) + matrix(rnorm(25, sd = 0.04), 5); P[1, 1] <- 1; P[3:5, 3:5] <- P[3:5, 3:5] - 0.10; YR[k, , ] <- P }
+fit_r <- sir_fit(YR, doses = list(doses, doses), design = "R", noise = noise, B = 399, B2 = 999, seed = 3)
+summary(fit_r)
+fit_r$mean_test[c("name", "est", "se", "df", "p")]
+```
+
+In design R the companion is the block-level $t$ test on `r fit_r$mean_test$df` degrees of freedom (three plates give two), exactly the test used for the four-plate O'Neil matrix above.
+
+## External single-agent curves (design P)
+
+Design `"P"` treats the first row and column as reported single-agent curves from outside the plate and (by default, `sa_replicates = Inf`) keeps them fixed. The O'Neil matrix above was run this way, with its four replicate plates as a stack:
+
+```{r use-P}
+fit_p <- sir_fit(Y, doses = list(dA, dB), design = "P", noise = sir_noise_parametric("oneil"), B = 399, B2 = 999, seed = 4)
+summary(fit_p)
+```
+
+The package fit of the O'Neil matrix gives $T_{\mathrm{SIR}} =$ `r sprintf("%.1f", fit_p$t_std)`, mean excess `r sprintf("%.3f", fit_p$mean_excess)` and activity `r sprintf("%.3f", fit_p$activity)`, the values in the released table; only the p-value floor differs because we used `B2 = 999`.
+
+## Noise constructors
+
+The test needs a noise model, and the package has no default: you choose one. `sir_noise_parametric()` takes an additive, lognormal or constant-CV law, a table or the built-in O'Neil SD curve, optional Student-$t_4$ tails and a plate-shift ratio. `sir_sd_curve()` builds the SD-versus-mean-viability curve used by the table and O'Neil laws.
+
+```{r noise-curves, fig.height=3.4}
+m <- seq(0, 1.1, by = 0.05)
+curves <- list(constant = sir_sd_curve("constant", 0.08), proportional = sir_sd_curve("proportional", 0.1),
+               table = sir_sd_curve("table", knots = c(0, 0.5, 1.1), sds = c(0.03, 0.09, 0.06)), oneil = sir_sd_curve("oneil"))
+dfc <- bind_rows(lapply(names(curves), function(k) data.frame(curve = k, mean_viability = m, sd = as.numeric(curves[[k]](m)))))
+ggplot(dfc, aes(mean_viability, sd, colour = curve)) + geom_line(linewidth = 0.9) +
+  labs(x = "Mean viability", y = "Single-replicate SD", colour = NULL)
+noise_list <- list(additive = sir_noise_parametric(sd = 0.06), oneil = sir_noise_parametric("oneil"),
+                   `table` = sir_noise_parametric("table", curve = curves$table),
+                   `additive + plate shift` = sir_noise_parametric(sd = 0.06, plate_shift_ratio = 0.5))
+res <- bind_rows(lapply(names(noise_list), function(k) {
+  f <- sir_fit(Ys, doses = list(doses, doses), design = "S", noise = noise_list[[k]], B = 199, two_stage = FALSE, seed = 12, fragility = "never")
+  data.frame(noise = k, t_std = f$t_std, p_tstd = f$p_tstd, p_mean = f$p_mean)
+}))
+kb(res, digits = 4, caption = "The same matrix under four noise models: the statistic changes with the SD curve, the reference with the noise law.")
+```
+
+When replicate data from the same assay are available, `sir_sd_from_replicates()` estimates an SD curve, `sir_noise_bank()` builds a residual bank (cross-fitted by group, as in the paper's screens) and `sir_plate_variance()` estimates the plate-shift variance for design P. Their inputs are four-dimensional arrays `c(sets, replicates, rows, columns)`:
+
+```{r bank}
+bk <- read_result("realdata/oneil_EFM192B_150sets.csv")      # 150 matrices of EFM192B, four plates each
+Ybank <- array(NA_real_, c(150, 4, 5, 5)); Ybank[cbind(bk$set, bk$plate, bk$row, bk$col)] <- bk$viability_raw
+for (s in seq_len(dim(Ybank)[1])) for (k in 1:4) Ybank[s, k, , ] <- Ybank[s, k, , ] / Ybank[s, k, 1, 1]
+cv_est <- sir_sd_from_replicates(Ybank)
+cat("Estimated SD curve from", dim(Ybank)[1], "O'Neil matrices:", py_to_r(cv_est$describe()), "\n")
+kb(data.frame(mean_viability = py_to_r(cv_est$kv), sd = py_to_r(cv_est$ks)), digits = 4, caption = "Knots of the estimated SD curve.")
+```
+
+## A screening family
+
+`sir_screen()` takes a data frame with a list column of matrices and a family label, fits each row with an independent seed, and applies BH within each family at level `q`. The columns it adds are `p` (the unadjusted p-value of the chosen test), `q` (BH-adjusted), `call` and the per-matrix fields.
+
+```{r use-screen}
+set.seed(9)
+mk <- function(delta, n = 5) { P <- outer(a, b) + matrix(rnorm(25, sd = 0.04), 5); P[1, 1] <- 1; P[3:5, 3:5] <- P[3:5, 3:5] - delta; P }
+panel <- data.frame(pair = paste0("pair", 1:6), family = rep(c("cell-1", "cell-2"), each = 3))
+panel$Y <- list(mk(0.14), mk(0), mk(0.02), mk(0.12), mk(0), mk(0))
+hits <- sir_screen(panel, design = "S", noise = noise, B = 199, B2 = 999, seed = 15)
+kb(hits[c("pair", "family", "p", "q", "call", "p_tstd", "mean_excess", "mean_excess_se", "activity", "p_mean", "p_scan")], digits = 4)
+str(attr(hits, "notes"))
+```
+
+In this toy family of two cell lines the screen calls `r sum(hits$call)` of `r nrow(hits)` pairs at $q = 0.05$, BH being applied separately within `cell-1` and `cell-2`. `attr(hits, "notes")` is empty here; it records Monte Carlo resolution limits when a p-value cannot reach what BH needs.
+
+## What the output fields mean
+
+```{r fields}
+fields <- data.frame(
+  Field = c("t_std", "p_tstd", "stage, B_used", "p_scan", "claims", "p_mean", "mean_excess, mean_excess_se", "mean_test",
+            "activity", "excess_map, fitted_surface, a_hat, b_hat", "call", "log", "fragility"),
+  Meaning = c("The SIR statistic T_SIR. Larger means more standardized positive excess over the Bliss prediction.",
+              "Primary p-value of H0: no cell is synergistic, from the plug-in reference at exact Bliss (final stage).",
+              "Which Monte Carlo stage produced p_tstd (1: 399 draws; 2: a fresh 9,999) and how many reference plates it used; p cannot be smaller than 1 / (B_used + 1).",
+              "Global p-value of the region scan (familywise error controlled).",
+              "List of claimed regions (cells, standardized statistic z, adjusted p). A claim says the region holds at least one synergistic cell. Indices are zero-based in the original grid.",
+              "Companion p-value of H0: mean Bliss excess <= 0 (block-level t for replicate stacks, design-matched otherwise).",
+              "Mean Bliss excess and its standard error (NaN for an incomplete single-plate S grid).",
+              "Name and details of the companion test that was used.",
+              "Mean kill, 1 - Y, over the observed combination cells.",
+              "Isotonic Bliss excess on the interior, fitted surface, and the one-dimensional single-agent fits.",
+              "TRUE when p_tstd <= alpha. A call needs independent experimental confirmation.",
+              "How the data were handled: dropped doses, missing wells, screened replicate values, notes.",
+              "Sensitivity flags for influential cells and single-agent doses (not outlier tests)."))
+kb(fields, caption = "Fields of a sir_fit object that a user normally needs.")
+cat("Fields present in fit_s:", paste(names(fit_s), collapse = ", "), "\n")
+cat("fit_s$log:\n"); str(fit_s$log[c("design", "n_replicates", "analyzed_shape", "dropped_doses", "missing_cells", "screened")])
+```
+
+# Conclusions
+
+**What we found.** One call to the SIR procedure on the temozolomide + MK-4827 matrix reproduces every number in the paper's Figure 2: $T_{\mathrm{SIR}} = `r sprintf("%.1f", r1$t_std)`$ (the same value from the formula, the package and the released table), $p = `r r1$p_tstd`$ at the floor of a 9,999-draw reference, a block-level companion test with mean excess `r sprintf("%.3f", r1$mean_excess)` (SE `r sprintf("%.3f", r1$mean_excess_se)`), a high-dose region claim, activity `r sprintf("%.3f", r1$activity)`, and `r n_bh` of `r n_fam` matrices called by BH in the cell-line family. The single-agent fits show where the isotonic constraint does work: the increasing temozolomide wells are pooled into a single level.
+
+**What it means.** The method asks for no curve family. A monotone shape, a noise model and a simulation at exact Bliss give a test aimed at a level of at most the nominal one over the whole no-synergy null (the check above rejects exact Bliss at `r sprintf("%.3f", lfn[2, 2])` and an antagonistic surface at `r sprintf("%.3f", lfn[1, 2])`). With the true curves and noise law this level guarantee is exact; with the plug-in reference it is approximate and checked by simulation and on real noise. The same fit yields four complementary summaries per matrix: where (scan), on average (companion), how much killing (activity), and how many matrices (BH).
+
+**Limits (as stated in the paper).** The least-favorable-null result holds when calibrating with the true single-agent curves and noise law, and covers replicate means and other replicate summaries that are nondecreasing in each replicate, not the replicate screen. The package's plug-in bootstrap substitutes estimates, so its p-values are approximate; their calibration is checked by simulation and on real noise. The region scan was calibrated by simulation on complete grids with parametric noise in designs S and P, not with residual banks, missing wells, replicate screening or propagated single-agent uncertainty. FDR control under dependence between tests that share a single-agent curve rests on simulation. A region claim does not locate a cell. The excess map is descriptive.
+
+**What to report.** For each matrix, report `t_std` with `p_tstd` (and its stage and `B_used`), `p_scan` with the claimed regions, `mean_excess` with `mean_excess_se` and `p_mean`, `activity`, and the BH `q` within the declared family, together with the noise model, the design (S, R or P) and the `log`. Calls need independent experimental confirmation.
+
+**A difference to expect.** The package example with the parametric O'Neil SD curve and the production screen (residual noise bank) give the same statistic and the same p-value floor for this matrix; the number of claimed regions can differ because the two use different reference noise.

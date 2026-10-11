@@ -1,0 +1,35 @@
+{
+  "band_search": {
+    "datasets": 298,
+    "max_p_change": 0.012
+  },
+  "band_order": {
+    "add": {
+      "n_viol_0.9": 89,
+      "n_viol_0.95": 69,
+      "n_viol_0.99": 23
+    },
+    "logn": {
+      "n_viol_0.9": 542,
+      "n_viol_0.95": 504,
+      "n_viol_0.99": 327
+    },
+    "oneil": {
+      "n_viol_0.9": 259,
+      "n_viol_0.95": 210,
+      "n_viol_0.99": 96
+    }
+  },
+  "reference_size": {
+    "0.05": {
+      "paired_settings": 35,
+      "median_excess_399_relative_to_1999_percent": 0.6129130452404263,
+      "median_reduction_1999_relative_to_399_percent": 0.60917930580624
+    },
+    "0.005": {
+      "paired_settings": 30,
+      "median_excess_399_relative_to_1999_percent": 2.3751260997933232,
+      "median_reduction_1999_relative_to_399_percent": 2.3200035914247685
+    }
+  }
+}

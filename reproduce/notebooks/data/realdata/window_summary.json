@@ -1,0 +1,73 @@
+{
+ "oneil": {
+  "drugs_in_cmax_table": 24,
+  "drugs_with_cmax_present": 21,
+  "units_total": 23052,
+  "units_both_drugs_with_cmax": 5148,
+  "units_untestable_after_restriction": 780,
+  "untestable_reason_counts": {
+   "A keeps 4, B keeps 0": 429,
+   "A keeps 0, B keeps 4": 156,
+   "A keeps 0, B keeps 3": 117,
+   "A keeps 2, B keeps 0": 39,
+   "A keeps 3, B keeps 0": 39
+  },
+  "units_testable": 4368,
+  "units_window_keeps_all_doses": 1950,
+  "units_refit_restricted": 2418,
+  "refit_errors": 0,
+  "identity_check_max_abs_diff": 0.0,
+  "families": 39,
+  "tstd_bh_calls_full": 2109,
+  "tstd_bh_calls_window": 1905,
+  "tstd_bh_calls_both": 1847,
+  "companion_bh_calls_full": 969,
+  "companion_bh_calls_window": 958,
+  "companion_bh_calls_both": 881,
+  "tstd_nominal_full": 2395,
+  "tstd_nominal_window": 2245,
+  "spearman_mean_excess_full_vs_window": 0.9732854683864863,
+  "median_doses_kept_a": 4.0,
+  "median_doses_kept_b": 4.0,
+  "analyzed_grid_counts": {
+   "5.0x5.0": 1950,
+   "5.0x4.0": 1482,
+   "4.0x5.0": 429,
+   "4.0x4.0": 234,
+   "3.0x5.0": 156,
+   "3.0x4.0": 117
+  }
+ },
+ "almanac": {
+  "drugs_in_cmax_table": 24,
+  "drugs_with_cmax_present": 22,
+  "units_total": 227323,
+  "units_both_drugs_with_cmax": 11325,
+  "units_untestable_after_restriction": 0,
+  "untestable_reason_counts": {},
+  "units_testable": 11325,
+  "units_window_keeps_all_doses": 10154,
+  "units_refit_restricted": 1171,
+  "refit_errors": 0,
+  "identity_check_max_abs_diff": 0.0,
+  "families": 60,
+  "tstd_bh_calls_full": 221,
+  "tstd_bh_calls_window": 183,
+  "tstd_bh_calls_both": 182,
+  "companion_bh_calls_full": 1,
+  "companion_bh_calls_window": 1,
+  "companion_bh_calls_both": 1,
+  "tstd_nominal_full": 655,
+  "tstd_nominal_window": 583,
+  "spearman_mean_excess_full_vs_window": 0.98070825976588,
+  "median_doses_kept_a": 3.0,
+  "median_doses_kept_b": 3.0,
+  "analyzed_grid_counts": {
+   "4.0x4.0": 10154,
+   "4.0x3.0": 642,
+   "3.0x4.0": 529
+  }
+ },
+ "window": "nonzero doses <= 3.0 x Cmax (uM) for both drugs; Cmax from reproduce/data/clinical_concentrations.csv",
+ "seconds": 26.0
+}

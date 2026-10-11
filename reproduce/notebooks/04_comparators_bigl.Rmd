@@ -1,0 +1,621 @@
+---
+title: "Comparison with BIGL and other inferential tools"
+subtitle: "Main Figure 5 and Supplementary Table S5"
+author: "SIR authors"
+date: "`r format(Sys.Date(), '%B %d, %Y')`"
+output:
+  html_document:
+    theme: flatly
+    toc: true
+    toc_float:
+      collapsed: false
+    toc_depth: 3
+    number_sections: true
+    code_folding: hide
+    fig_width: 9
+    fig_height: 6
+    df_print: kable
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE,
+                      fig.align = "center", out.width = "100%")
+source("_common.R")
+suppressPackageStartupMessages({
+  library(SIR)
+  library(data.table)
+  library(jsonlite)
+  library(patchwork)
+  library(scales)
+})
+options(width = 120, digits = 5)
+set.seed(20260102)
+theme_set(theme_report)
+
+tbl <- function(x, ...) kbl_report(x, ...)
+f3 <- function(x, nd = 3) formatC(x, format = "f", digits = nd)
+hu <- function(x, nd = 3) sprintf(paste0("%.", nd, "f"), floor(round(x * 10^nd, 6) + 0.5) / 10^nd)
+wilson <- function(k, n, z = 1.959964) {
+  p <- k / n; den <- 1 + z^2 / n
+  ctr <- (p + z^2 / (2 * n)) / den
+  h <- z * sqrt(p * (1 - p) / n + z^2 / (4 * n^2)) / den
+  cbind(lo = ctr - h, hi = ctr + h)
+}
+# Rate with Wilson interval from a logical vector of rejections, or from counts k out of n
+rate_of <- function(x, n = NULL) {
+  if (is.null(n)) { x <- as.logical(x); k <- sum(x); n <- length(x) } else k <- x
+  w <- wilson(k, n)
+  list(k = k, n = n, p = k / n, lo = w[1, "lo"], hi = w[1, "hi"])
+}
+rd <- function(rel) {
+  d <- as.data.table(read_result(rel))
+  for (cc in names(d)) if (is.factor(d[[cc]])) set(d, j = cc, value = as.character(d[[cc]]))
+  d
+}
+
+chk <- data.frame(item = character(), paper = numeric(), computed = numeric(),
+                  digits = integer(), match = logical(), stringsAsFactors = FALSE)
+add_chk <- function(item, paper, computed, digits = 3) {
+  ok <- abs(computed - paper) <= 0.5 * 10^(-digits) + 1e-9
+  chk[nrow(chk) + 1, ] <<- list(item, paper, computed, digits, ok)
+  invisible(ok)
+}
+tex_rows <- function(rel) {
+  L <- readLines(result_path(rel))
+  L <- L[grepl("&", L, fixed = TRUE) & grepl("\\\\\\\\\\s*$", L)]
+  lapply(strsplit(sub("\\\\\\\\\\s*$", "", L), "&", fixed = TRUE), trimws)
+}
+tex_same <- function(mine, rel) {
+  th <- tail(tex_rows(rel), length(mine))
+  length(th) == length(mine) &&
+    all(vapply(seq_along(mine), function(i) identical(tail(th[[i]], length(mine[[i]])), mine[[i]]), logical(1)))
+}
+```
+
+```{r load-all}
+# Our side: counts of rejections at 0.05 for the SIR statistic, region scan and mean test on the
+# comparison matrices (collapsed from simulations/bigl_ours.parquet by data/make_aggregates.py)
+ours_c <- rd("aggregates/bigl_ours_cells.csv")
+summ_json <- read_result("simulations/bigl_summary.json", simplifyVector = FALSE)
+
+# BIGL side: one row per matrix and BIGL configuration (decisions derived from the saved output of
+# stages/03_simulations/bigl.R, which is not rerun; collapsed by data/make_aggregates.py)
+raw <- as.data.table(utils::read.csv(result_path("aggregates/bigl_decisions.csv.gz")))
+for (cc in c("ok", "syn05", "syn10", "rank05", "mean05")) set(raw, j = cc, value = as.logical(raw[[cc]]))
+```
+```
+
+# Summary
+
+# Summary
+
+```{r key-numbers}
+# Headline numbers, computed from the cached outputs (each is recomputed in its own section below).
+set6 <- c("weak_gauss", "weak_oneil", "moderate_gauss", "moderate_oneil", "strong_gauss", "strong_oneil")
+k_dist <- sapply(c("weak_gauss", "moderate_gauss"), function(st) mean(raw[config == "ship_eq" & setting == paste0("r4_", st) & cond == "null"]$syn05))
+k_pw <- function(cd, col) mean(ours_c[cond == cd & r == 4][[col]] / ours_c[cond == cd & r == 4]$n)
+k_bg <- function(cd) mean(sapply(set6, function(st) mean(raw[config == "vb_eq" & setting == paste0("r4_", st) & cond == cd]$syn10)))
+k_null <- ours_c[cond == "null" & r == 4]
+k_fail <- sum(raw[config == "ship_eq" & cond == "real"]$fit_err != 0)
+key <- data.frame(
+  Quantity = c("BIGL as distributed, synergy label at exact viability Bliss (weak and moderate agents, Gaussian noise)",
+               "SIR statistic at exact Bliss (six settings, four replicates)",
+               "Mean power, broad synergy: SIR statistic / BIGL maxR with the viability reference at 0.10",
+               "Mean power, high-dose synergy", "Mean power, saturating synergy",
+               "Mean power, single top-corner cell: SIR statistic / region scan / BIGL maxR",
+               "BIGL marginal fit failures on real O'Neil groups"),
+  Value = c(sprintf("%s to %s", hu(min(k_dist)), hu(max(k_dist))), sprintf("%s to %s", hu(min(k_null$k_tstd / k_null$n)), hu(max(k_null$k_tstd / k_null$n))),
+            sprintf("%s / %s", hu(k_pw("syn_broad_0.10", "k_tstd")), hu(k_bg("syn_broad_0.10"))),
+            sprintf("%s / %s", hu(k_pw("syn_highdose_0.40", "k_tstd")), hu(k_bg("syn_highdose_0.40"))),
+            sprintf("%s / %s", hu(k_pw("sat_0.25", "k_tstd")), hu(k_bg("sat_0.25"))),
+            sprintf("%s / %s / %s", hu(k_pw("syn_corner_0.60", "k_tstd")), hu(k_pw("syn_corner_0.60", "k_scan")), hu(k_bg("syn_corner_0.60"))),
+            sprintf("%d of 300", k_fail)))
+tbl(key, row.names = FALSE)
+```
+
+**Bottom line.** BIGL's Bliss reference is not the viability product when a single agent is partial, so BIGL as distributed labels synergy in `r hu(min(k_dist))` to `r hu(max(k_dist))` of exact viability-Bliss matrices with weak or moderate agents and Gaussian noise. With the reference matched to the viability product, the SIR statistic is more powerful than BIGL's pointwise test for broad, high-dose and saturating synergy (mean power `r hu(k_pw("syn_broad_0.10", "k_tstd"))`, `r hu(k_pw("syn_highdose_0.40", "k_tstd"))` and `r hu(k_pw("sat_0.25", "k_tstd"))` against `r hu(k_bg("syn_broad_0.10"))`, `r hu(k_bg("syn_highdose_0.40"))` and `r hu(k_bg("sat_0.25"))`), while for a single synergistic corner cell BIGL (`r hu(k_bg("syn_corner_0.60"))`) is ahead of the SIR statistic (`r hu(k_pw("syn_corner_0.60", "k_tstd"))`) but not of the region scan (`r hu(k_pw("syn_corner_0.60", "k_scan"))`). On real O'Neil groups BIGL's marginal fit failed on `r k_fail` of 300, and a fit takes about 0.4 to 0.8 s against 0.005 to 0.011 s for the SIR test.
+
+# The question
+
+## Background
+
+BIGL is the best-known inferential tool for drug combination surfaces. It fits a parametric dose-response curve (a four-parameter logistic) to each single agent, builds a null surface for the combination from the two fitted curves, and tests the deviation of the observed combination wells from that surface by bootstrap. It offers a pointwise test (maxR, which reports where the surface deviates) and an average test (meanR). Other tools reach a p-value differently. SynergyFinder Plus pools the cell-wise synergy scores of a matrix into one p-value, and the Demidenko-Miller test is a parametric test for the complete pairwise design, in which the single agents are measured with the combinations on one grid.
+
+We compare with BIGL on shared data because it targets the same kind of question (is there synergy anywhere on this matrix) and it can be run on the same plates. A comparison is only informative if both tools test the same null, so the first thing to settle is what BIGL means by Bliss.
+
+> **Question.** When BIGL and the SIR test are given the same matrices, do they agree on what no synergy means, how often does each call synergy when there is none, how much power does each have for different shapes of synergy, and how do they behave on real replicate plates?
+
+## Why it is hard
+
+* A null model is part of every test. If two tools compute different Bliss surfaces from the same single agents, the same exact-Bliss matrix is a null for one and an alternative for the other, and the size and power comparison is confounded with the choice of reference.
+* The tools make different distributional assumptions. BIGL estimates a residual variance from a fitted smooth curve; our reference uses a noise law estimated from replicate wells. On real plates, curves with a flat dose response make the nonlinear fits unstable.
+* Power depends on the shape of the synergy, so one summary number is not enough.
+
+# The method and the math
+
+## The SIR test in one paragraph
+
+With mean viability surface $\mu_{ij}$, single agents $a_i=\mu_{i0}$ and $b_j=\mu_{0j}$, the SIR test takes Bliss independence on mean viability, $\mu_{ij}=a_ib_j$, as its reference (exact Bliss), and rejects "no synergy in any cell" for large values of
+
+$$T_{\mathrm{SIR}}=\sum_{i,j\ge1}\left(\frac{\hat a_i\hat b_j-\hat\mu_{ij}}{s(\hat a_i\hat b_j)}\right)_+^{2},$$
+
+with $\hat a,\hat b$ one-dimensional isotonic fits of the single-agent wells and $\hat\mu$ the two-dimensional isotonic fit of all wells. (The package field is `t_std`.) The p-value comes from the plug-in bootstrap at exact Bliss: reference plates are drawn with mean $\hat a_i\hat b_j$ and the assumed noise law, and analyzed identically. The region scan tests whether any of a fixed family of regions (high-dose rectangles and all $2\times2$ blocks) contains synergy, with the maximum over the family as the reference. The mean test tests the weaker null that the average excess is not positive. With replicate plates the mean test is a block-level $t$ test, and for single plates it is V2Sp. Calibration of these tests is the subject of the calibration notebook (03).
+
+## What BIGL calls Bliss
+
+Write $b$ for the baseline (control) viability, $m_k$ for the fitted asymptote of agent $k$, and $f_k\in[0,1]$ for the fraction of the maximal effect reached at the dose used, so that the effect of agent $k$ is $u_k=(b-m_k)f_k$. The viability product is
+
+$$\text{product}=\frac{(b-u_1)(b-u_2)}{b}=b-u_1-u_2+\frac{u_1u_2}{b}.$$
+
+BIGL's Bliss reference rescales each fitted fraction by the larger of the two maximal effects, $R=\max_k|m_k-b|$, writes $\tilde f_k=u_k/R$, and predicts $b-R(\tilde f_1+\tilde f_2-\tilde f_1\tilde f_2)$, which is
+
+$$\text{BIGL}=b-u_1-u_2+\frac{u_1u_2}{R}.$$
+
+The two agree only when $R=b$, that is, when the stronger agent's fitted asymptote is zero. Whenever a single agent is partial ($m_k>0$), BIGL's prediction is higher than the product, so BIGL's null surface kills less than independent action would. For two identical agents with maximal inhibition $E$ and baseline $b=1$, $R=E$, $u_k=Ef$, and the difference is
+
+$$\text{BIGL}-\text{product}=E(1-E)\,f_1f_2,$$
+
+which is zero for a full agent ($E=1$) and for an inert one ($E=0$), and largest at $E=1/2$. An exact viability-Bliss matrix with partial agents therefore lies below BIGL's null surface in every combination cell, which BIGL reads as synergy.
+
+**Worked example.** The chunk below computes both predictions for identical Hill agents ($f=d^{1.5}/(1+d^{1.5})$ at four doses from 0.1 to 10) and compares them with the reference table written by the pipeline (`bigl_reference.csv`, produced from BIGL's own function).
+
+```{r reference-gap}
+hill <- function(d, h = 1.5) d^h / (1 + d^h)
+bigl_pred    <- function(f1, f2, E1, E2, b = 1) { R <- max(E1, E2); u1 <- E1 * f1; u2 <- E2 * f2; b - u1 - u2 + u1 * u2 / R }
+product_pred <- function(f1, f2, E1, E2, b = 1) (b - E1 * f1) * (b - E2 * f2) / b
+dose4 <- c(0.1, 0.46415888336127786, 2.154434690031884, 10)
+cells <- CJ(E = c(0.3, 0.7, 0.95), d1 = dose4, d2 = dose4)
+cells[, `:=`(bigl = mapply(function(e, a, b2) bigl_pred(hill(a), hill(b2), e, e), E, d1, d2),
+             product = mapply(function(e, a, b2) product_pred(hill(a), hill(b2), e, e), E, d1, d2))]
+cells[, gap := bigl - product]
+ref <- rd("simulations/bigl_reference.csv")
+cmp <- merge(cells, ref, by = c("E", "d1", "d2"), suffixes = c("", "_file"))
+cat("Largest difference between the formula and BIGL's own function (reference table):",
+    format(max(abs(cmp$bigl - cmp$bigl_bliss), abs(cmp$product - cmp$viability_bliss)), digits = 3), "\n")
+gap_tab <- cells[, .(`mean gap over 16 cells` = mean(gap), `maximum gap` = max(gap), `E(1-E)` = E[1] * (1 - E[1])), by = E]
+tbl(gap_tab, digits = 4)
+gap03 <- gap_tab[E == 0.3][[2]]; gap095 <- gap_tab[E == 0.95][[2]]
+add_chk("Supplement S5: mean reference gap, E = 0.3", 0.0525, gap_tab[E == 0.3]$`mean gap over 16 cells`, 4)
+add_chk("Supplement S5: mean reference gap, E = 0.7", 0.0525, gap_tab[E == 0.7]$`mean gap over 16 cells`, 4)
+add_chk("Supplement S5: maximum reference gap", 0.197, max(gap_tab[E %in% c(0.3, 0.7)]$`maximum gap`), 3)
+```
+
+The gap is the same for $E=0.3$ and $E=0.7$ because $E(1-E)$ is, and it is small for a strong agent ($E=0.95$). The mean gap of about 0.05 is a large offset on plates whose per-well noise has SD 0.08 and whose four-replicate mean has SD 0.04.
+
+## What the matched reference changes
+
+We therefore ran BIGL in two configurations. "As distributed" uses BIGL's Bliss function. "Patched" replaces that function by the viability product (three lines of code) and is otherwise identical, so that the two tools test the same null. BIGL tests equality in both directions; its one-sided counterpart for comparison with one-sided tests at level 0.05 is the maxR synergy label at level 0.10. With the reference matched, differences in size and power reflect the tests themselves and not the null surface.
+
+## Comparison design
+
+All matrices are $5\times5$ with identical Hill single agents of maximal effect $E=0.3$, 0.7 or 0.95 (weak, moderate, strong), additive Gaussian noise with SD 0.08 or the O'Neil SD curve on every well, and four replicate plates (or one). Null matrices are exact viability Bliss (1,000 datasets per setting). The alternatives are 10% broad antagonism and four synergy patterns (broad, high dose, single top-corner cell, saturating), 500 datasets per setting. Our tests use the true noise law, $B=399$ reference plates and 200 scan-standardization plates; BIGL uses 100 bootstrap samples and its default or modeled variance.
+
+# The data
+
+```{r data-overview}
+ours_counts <- ours_c[, .(datasets = sum(n)), by = .(r, cond)][, .(cells = .N, datasets_per_cell = paste(sort(unique(datasets)), collapse = ", ")), by = r]
+tbl(data.frame(table = c("bigl_ours_cells.csv", "bigl_decisions.csv.gz"),
+               rows = c(nrow(ours_c), nrow(raw)),
+               content = c("rejection counts of the SIR statistic, region scan and mean test per setting and truth",
+                           "one row per matrix and BIGL configuration (ship_eq, ship_eq_residual, ship_model, vb_eq, vb_model); fit and surface error codes, maxR and meanR decisions")))
+tbl(ours_counts, row.names = FALSE)
+tbl(raw[, .N, by = config][order(config)][, .(configuration = config, matrices = N)], row.names = FALSE)
+cat("Our datasets = 6 settings x (1000 null + 5 x 500 alternatives) at four replicates + 6 x 1000 nulls at one replicate:",
+    6 * (1000 + 5 * 500) + 6 * 1000, "; observed", sum(ours_c$n), "\n")
+```
+
+The BIGL configurations are named after the Bliss function and the variance method: `ship_eq` is BIGL as distributed with equal variance, `vb_eq` the viability-product reference with equal variance, `ship_model` and `vb_model` the same with modeled variance, and `ship_eq_residual` a residual-bootstrap variant used in a single-plate check. A matrix without a BIGL result (marginal curve fit failed, or the Bliss surface could not be built) counts as a non-rejection in our rates, as in the pipeline, and is reported separately in Section 5.4.
+
+Rates for BIGL are computed here from the saved per-matrix decisions and compared with the values the pipeline wrote to `bigl_summary.json`.
+
+```{r bigl-vs-json}
+bigl_rate <- function(cfg, st, cd, col) rate_of(raw[config == cfg & setting == st & cond == cd][[col]])
+chk_dist <- sapply(names(summ_json$bigl_null_distributed), function(st) bigl_rate("ship_eq", st, "null", "syn05")$p)
+json_dist <- sapply(summ_json$bigl_null_distributed, function(x) x$p)
+cat("Largest difference between BIGL rates recomputed from the CSV chunks and bigl_summary.json (distributed reference, exact Bliss):",
+    format(max(abs(chk_dist - json_dist)), digits = 3), "\n")
+```
+
+# Figure 5 and Table S5
+
+## Rationale
+
+Figure 5 answers the question in four panels. A and B test the size of each method under exact viability Bliss (four replicates and one replicate). C tests power for antagonism and four synergy patterns. D compares call rates on 300 real O'Neil groups, where the truth is unknown. The figure is drawn at the end of this section from the numbers computed below. We expect BIGL as distributed to over-call in the settings where the reference offset is large relative to noise, BIGL with the viability product to be near nominal, our tests to be near nominal in all settings, and power to depend on the pattern.
+
+
+
+## Size under exact viability Bliss (panels A and B)
+
+```{r size-rebuild}
+SURF <- c("weak", "moderate", "strong"); NOI <- c("gauss", "oneil")
+settings <- as.vector(t(outer(SURF, NOI, paste, sep = "_")))
+size_rows <- rbindlist(lapply(c(4, 1), function(r) {
+  rbindlist(lapply(settings, function(st) {
+    sname <- sprintf("r%d_%s", r, st)
+    oc <- ours_c[setting == sname & cond == "null"]
+    mk <- function(method, k, n) { z <- rate_of(k, n); data.table(r = r, setting = st, method = method, k = z$k, n = z$n, rate = z$p, lo = z$lo, hi = z$hi) }
+    bg <- function(cfg, col) { x <- raw[config == cfg & setting == sname & cond == "null"][[col]]; list(k = sum(x), n = length(x)) }
+    rbind(mk("SIR statistic", oc$k_tstd, oc$n), mk("Region scan", oc$k_scan, oc$n),
+          mk(if (r == 4) "Mean test (block-level t)" else "Mean test (V2Sp)", oc$k_mean, oc$n),
+          mk("BIGL maxR, distributed reference", bg("ship_eq", "syn05")$k, bg("ship_eq", "syn05")$n),
+          mk("BIGL meanR, distributed reference", bg("ship_eq", "mean05")$k, bg("ship_eq", "mean05")$n),
+          mk("BIGL maxR, viability reference", bg("vb_eq", "syn05")$k, bg("vb_eq", "syn05")$n),
+          mk("BIGL meanR, viability reference", bg("vb_eq", "mean05")$k, bg("vb_eq", "mean05")$n))
+  }))
+}))
+size_rows[, method := factor(method, levels = unique(method))]
+wide4 <- dcast(size_rows[r == 4], method ~ setting, value.var = "rate")[, c("method", settings), with = FALSE]
+tbl(cbind(method = wide4$method, round(wide4[, ..settings], 3)), caption = "Null rejection rate at level 0.05, four replicates (1,000 datasets per setting)")
+wide1 <- dcast(size_rows[r == 1], method ~ setting, value.var = "rate")[, c("method", settings), with = FALSE]
+tbl(cbind(method = wide1$method, round(wide1[, ..settings], 3)), caption = "Same with one replicate (our tests 1,000 datasets, BIGL 500 per setting)")
+
+```
+
+```{r size-ranges}
+rg4 <- function(m, sets = settings) { v <- size_rows[size_rows$r == 4 & method == m & setting %in% sets]$rate; c(min(v), max(v)) }
+rg1 <- function(m, sets = settings) { v <- size_rows[size_rows$r == 1 & method == m & setting %in% sets]$rate; c(min(v), max(v)) }
+partial_gauss <- c("weak_gauss", "moderate_gauss")
+bigl_dist_pg <- rg4("BIGL maxR, distributed reference", partial_gauss)
+bigl_dist_other <- rg4("BIGL maxR, distributed reference", setdiff(settings, partial_gauss))
+ant_dist <- rate_of(raw[config == "ship_eq" & setting == "r4_moderate_gauss" & cond == "ant_broad_0.10"]$syn05)$p
+patched_any <- sapply(settings, function(st) rate_of(raw[config == "vb_eq" & setting == paste0("r4_", st) & cond == "null"]$rank05)$p)
+patched_mean <- rg4("BIGL meanR, viability reference")
+r4_tstd <- rg4("SIR statistic"); r4_scan <- rg4("Region scan")
+tbl(data.frame(
+  quantity = c("BIGL as distributed, maxR synergy label, weak and moderate agents with Gaussian noise (range)",
+               "BIGL as distributed, other four settings (range)",
+               "BIGL as distributed, synergy label under 10% antagonism (moderate agents, Gaussian noise)",
+               "BIGL with the viability product, two-sided maxR by the rank rule (range over six settings)",
+               "BIGL with the viability product, meanR (range)",
+               "SIR statistic, true noise law (range)", "Region scan, true noise law (range)"),
+  value = c(sprintf("%s to %s", hu(bigl_dist_pg[1]), hu(bigl_dist_pg[2])), sprintf("%s to %s", hu(bigl_dist_other[1]), hu(bigl_dist_other[2])),
+            hu(ant_dist), sprintf("%s to %s", hu(min(patched_any)), hu(max(patched_any))),
+            sprintf("%s to %s", hu(patched_mean[1]), hu(patched_mean[2])),
+            sprintf("%s to %s", hu(r4_tstd[1]), hu(r4_tstd[2])), sprintf("%s to %s", hu(r4_scan[1]), hu(r4_scan[2])))),
+  row.names = FALSE)
+add_chk("Results: BIGL as distributed labels synergy in exact Bliss matrices, lower end", 0.154, bigl_dist_pg[1])
+add_chk("Results: BIGL as distributed labels synergy in exact Bliss matrices, upper end", 0.353, bigl_dist_pg[2])
+add_chk("Supplement S5: BIGL as distributed, other four settings, lower end (0.021)", 0.021, bigl_dist_other[1])
+add_chk("Supplement S5: BIGL as distributed, other four settings, upper end (0.065)", 0.065, bigl_dist_other[2])
+add_chk("Supplement S5: BIGL as distributed, 10% antagonism", 0.368, ant_dist)
+add_chk("Supplement S5: patched two-sided maxR at exact Bliss, lower end", 0.035, min(patched_any))
+add_chk("Supplement S5: patched two-sided maxR at exact Bliss, upper end", 0.065, max(patched_any))
+add_chk("Table S5: patched meanR at exact Bliss, lower end", 0.006, patched_mean[1])
+add_chk("Table S5: patched meanR at exact Bliss, upper end", 0.069, patched_mean[2])
+add_chk("Table S5: SIR statistic at exact Bliss, lower end", 0.031, r4_tstd[1])
+add_chk("Table S5: SIR statistic at exact Bliss, upper end", 0.051, r4_tstd[2])
+add_chk("Table S5: region scan at exact Bliss, lower end", 0.013, r4_scan[1])
+add_chk("Table S5: region scan at exact Bliss, upper end", 0.046, r4_scan[2])
+```
+
+**What do we see?**
+
+With four replicates, BIGL as distributed labels synergy in `r hu(bigl_dist_pg[1])` (weak agents) and `r hu(bigl_dist_pg[2])` (moderate agents) of exact viability-Bliss matrices under Gaussian noise, and in `r hu(ant_dist)` of matrices that are 10% antagonistic with moderate agents. These are the two settings in which the reference offset of Section 3.2 is large (mean gap `r hu(gap03, 4)` for $E=0.3$ and 0.7, against `r hu(gap095, 4)` for $E=0.95$). In the other four settings the rate is `r hu(bigl_dist_other[1])` to `r hu(bigl_dist_other[2])`. The offset is the same for weak and moderate agents with the O'Neil SD curve, and BIGL's rate there is only `r hu(size_rows[r == 4 & setting == "weak_oneil" & method == "BIGL maxR, distributed reference"]$rate)` and `r hu(size_rows[r == 4 & setting == "moderate_oneil" & method == "BIGL maxR, distributed reference"]$rate)`, so the effect of the offset also depends on the noise; we have not separated the two. BIGL's meanR is more affected than maxR (up to `r hu(max(size_rows[r == 4 & method == "BIGL meanR, distributed reference"]$rate))`). With BIGL's reference replaced by the viability product, its two-sided maxR by the rank rule rejects `r hu(min(patched_any))` to `r hu(max(patched_any))`, so the excess comes from the choice of reference surface and not from BIGL's inference. Its synergy label at nominal 0.05 is conservative (`r hu(min(size_rows[r == 4 & method == "BIGL maxR, viability reference"]$rate))` to `r hu(max(size_rows[r == 4 & method == "BIGL maxR, viability reference"]$rate))`). The SIR statistic rejects `r hu(r4_tstd[1])` to `r hu(r4_tstd[2])`, the scan `r hu(r4_scan[1])` to `r hu(r4_scan[2])` and the block-level $t$ test `r hu(rg4("Mean test (block-level t)")[1])` to `r hu(rg4("Mean test (block-level t)")[2])`. With one replicate (panel B) the SIR statistic rejects `r hu(rg1("SIR statistic")[1])` to `r hu(rg1("SIR statistic")[2])` and the scan `r hu(rg1("Region scan")[1])` to `r hu(rg1("Region scan")[2])`; BIGL with normal bootstrap errors falls in `r hu(rg1("BIGL maxR, distributed reference")[1])` to `r hu(rg1("BIGL meanR, distributed reference")[2])` for the distributed reference, and the offset is not visible against the larger single-plate noise.
+
+## Power for broad, high-dose, saturating and single-corner synergy (panel C)
+
+```{r power-rebuild}
+ALTS <- c("ant_broad_0.10", "syn_broad_0.10", "syn_highdose_0.40", "syn_corner_0.60", "sat_0.25")
+ALT_LAB <- c(ant_broad_0.10 = "Antagonism 0.10", syn_broad_0.10 = "Broad", syn_highdose_0.40 = "High dose",
+             syn_corner_0.60 = "Top corner", sat_0.25 = "Saturating")
+pow_rows <- rbindlist(lapply(ALTS, function(cd) {
+  rbindlist(lapply(settings, function(st) {
+    sname <- paste0("r4_", st); o <- ours_c[setting == sname & cond == cd]
+    vb <- raw[config == "vb_eq" & setting == sname & cond == cd]
+    data.table(cond = cd, setting = st,
+               `SIR statistic` = o$k_tstd / o$n, `Region scan` = o$k_scan / o$n,
+               `Mean test (block-level t)` = o$k_mean / o$n,
+               `BIGL maxR, viability reference, 0.05` = mean(vb$syn05),
+               `BIGL meanR, viability reference` = mean(vb$mean05),
+               `BIGL maxR, viability reference, 0.10` = mean(vb$syn10), n = o$n)
+  }))
+}))
+meths <- setdiff(names(pow_rows), c("cond", "setting", "n"))
+pow_mean <- pow_rows[, lapply(.SD, mean), by = cond, .SDcols = meths][match(ALTS, cond)]
+pow_min  <- pow_rows[, lapply(.SD, min), by = cond, .SDcols = meths][match(ALTS, cond)]
+pow_max  <- pow_rows[, lapply(.SD, max), by = cond, .SDcols = meths][match(ALTS, cond)]
+tbl(cbind(truth = ALT_LAB[ALTS], round(pow_mean[, ..meths], 3)),
+    caption = "Rejection rate at level 0.05, mean over the six single-agent and noise settings (500 datasets per setting)")
+cat("Datasets per setting:", paste(unique(pow_rows$n), collapse = ", "), "\n")
+
+pm <- function(cd, m) pow_mean[cond == cd][[m]]
+add_chk("Results: broad synergy, SIR statistic", 0.536, pm("syn_broad_0.10", "SIR statistic"))
+add_chk("Results: broad synergy, patched maxR at 0.10", 0.241, pm("syn_broad_0.10", "BIGL maxR, viability reference, 0.10"))
+add_chk("Results: broad synergy, region scan", 0.374, pm("syn_broad_0.10", "Region scan"))
+add_chk("Results: high-dose synergy, SIR statistic", 0.604, pm("syn_highdose_0.40", "SIR statistic"))
+add_chk("Results: high-dose synergy, patched maxR at 0.10", 0.202, pm("syn_highdose_0.40", "BIGL maxR, viability reference, 0.10"))
+add_chk("Table S5: high-dose synergy, region scan", 0.534, pm("syn_highdose_0.40", "Region scan"))
+add_chk("Results: saturating synergy, SIR statistic", 0.759, pm("sat_0.25", "SIR statistic"))
+add_chk("Results: saturating synergy, patched maxR at 0.10", 0.206, pm("sat_0.25", "BIGL maxR, viability reference, 0.10"))
+add_chk("Table S5: saturating synergy, region scan", 0.719, pm("sat_0.25", "Region scan"))
+add_chk("Results: top corner, SIR statistic", 0.178, pm("syn_corner_0.60", "SIR statistic"))
+add_chk("Results: top corner, region scan", 0.332, pm("syn_corner_0.60", "Region scan"))
+add_chk("Results: top corner, BIGL maxR at 0.10", 0.303, pm("syn_corner_0.60", "BIGL maxR, viability reference, 0.10"))
+sw <- pow_rows[cond == "syn_corner_0.60" & setting == "weak_gauss"]
+sw_scan <- sw$`Region scan`; sw_maxr <- sw$`BIGL maxR, viability reference, 0.10`
+add_chk("Supplement S5: top corner, weak agents and Gaussian noise, region scan", 0.934, sw$`Region scan`)
+add_chk("Supplement S5: top corner, weak agents and Gaussian noise, BIGL maxR at 0.10", 0.918, sw$`BIGL maxR, viability reference, 0.10`)
+```
+
+The two-sided maxR at level 0.05 is the version matched to our two-sided null at the same level; the label at level 0.10 is its one-sided counterpart, which is the one plotted against our one-sided tests in panel C.
+
+**What do we see?**
+
+Under broad antagonism every test stays near zero except BIGL's meanR, which is a two-sided test and rejects `r hu(pm("ant_broad_0.10", "BIGL meanR, viability reference"))` of those matrices, in the antagonistic direction. For broad, high-dose and saturating synergy the SIR statistic has mean power `r hu(pm("syn_broad_0.10", "SIR statistic"))`, `r hu(pm("syn_highdose_0.40", "SIR statistic"))` and `r hu(pm("sat_0.25", "SIR statistic"))`, the region scan `r hu(pm("syn_broad_0.10", "Region scan"))`, `r hu(pm("syn_highdose_0.40", "Region scan"))` and `r hu(pm("sat_0.25", "Region scan"))`, and BIGL's maxR with the viability reference at the matching one-sided level `r hu(pm("syn_broad_0.10", "BIGL maxR, viability reference, 0.10"))`, `r hu(pm("syn_highdose_0.40", "BIGL maxR, viability reference, 0.10"))` and `r hu(pm("sat_0.25", "BIGL maxR, viability reference, 0.10"))`. These patterns spread the excess over many cells, which the sum of squared standardized excesses accumulates and a maximum over cells does not. For a single synergistic top-corner cell the order reverses: BIGL's pointwise test (`r hu(pm("syn_corner_0.60", "BIGL maxR, viability reference, 0.10"))`) is more powerful than the SIR statistic (`r hu(pm("syn_corner_0.60", "SIR statistic"))`), and the region scan (`r hu(pm("syn_corner_0.60", "Region scan"))`) is the best of the three on average, since the corner is one of its regions. In the strongest corner setting (weak agents, Gaussian noise) the scan reaches `r hu(sw_scan)` and BIGL's maxR `r hu(sw_maxr)`. The simulated single agents are exact four-parameter logistic curves, BIGL's own marginal model, which favors BIGL.
+
+## Real O'Neil groups (panel D)
+
+Panel D has no truth. It compares call rates of each method on 300 O'Neil four-block groups for which BIGL could be attempted. Our side is the production configuration of the screen (reported single agents held fixed, noise-bank reference, two-stage Monte Carlo), taken from the screen output and matched to the 300 groups by block identifier. BIGL ran with equal variance (`ship_eq`, `vb_eq`) and modeled variance (`ship_model`). A method is evaluated on the groups for which it returned a result.
+
+```{r real-prod}
+prod <- rd("aggregates/bigl_real_production.csv")
+setorder(prod, k)
+meta <- rd("inputs/bigl_real_meta.csv")
+stopifnot(nrow(prod) == 300)
+alpha_ok <- function(p, a = 0.05) p <= a * (1 + 1e-9)
+real <- raw[cond == "real"]
+real_rows <- rbindlist(list(
+  with(list(a = rate_of(alpha_ok(prod$p_tstd))), data.table(method = "SIR statistic (production)", k = a$k, n = a$n)),
+  with(list(a = rate_of(alpha_ok(prod$p_scan))), data.table(method = "Region scan (production)", k = a$k, n = a$n)),
+  with(list(a = rate_of(alpha_ok(prod$p_companion))), data.table(method = "Block-level t (production)", k = a$k, n = a$n)),
+  rbindlist(lapply(c(ship_eq = "distributed, equal variance", ship_model = "distributed, modeled variance", vb_eq = "viability, equal variance"), function(lab) NULL)),
+  rbindlist(lapply(c("ship_eq", "ship_model", "vb_eq"), function(cfg) {
+    x <- real[config == cfg]
+    lab <- c(ship_eq = "distributed, equal variance", ship_model = "distributed, modeled variance", vb_eq = "viability, equal variance")[[cfg]]
+    data.table(method = c(paste("BIGL maxR,", lab), paste("BIGL meanR,", lab)),
+               k = c(sum(x$syn05[x$ok]), sum(x$mean05[x$ok])), n = sum(x$ok))
+  }))), fill = TRUE)
+real_rows[, `:=`(rate = k / n, lo = wilson(k, n)[, "lo"], hi = wilson(k, n)[, "hi"])]
+tbl(real_rows[, .(method, groups = n, calls = k, `call rate` = hu(rate), `95% interval` = sprintf("[%s, %s]", hu(lo), hu(hi)))], row.names = FALSE)
+
+js <- function(x) summ_json[[x]]
+cat("\nCheck against bigl_summary.json (calls out of groups): production SIR statistic",
+    js("real_tstd")$k, "/", js("real_tstd")$n, "; scan", js("real_scan")$k, "/", js("real_scan")$n,
+    "; block-level t", js("real_block_t")$k, "/", js("real_block_t")$n, "\n")
+rr <- function(m) real_rows[method == m]
+add_chk("Supplement S5: BIGL default variance, share of analyzed groups called (0.97)", 0.97, rr("BIGL maxR, distributed, equal variance")$rate, 2)
+add_chk("Supplement S5: BIGL modeled variance, share called (0.51)", 0.51, rr("BIGL maxR, distributed, modeled variance")$rate, 2)
+add_chk("Supplement S5: production SIR statistic, share called (0.53)", 0.53, rr("SIR statistic (production)")$rate, 2)
+add_chk("Supplement S5: production region scan, share called (0.53)", 0.53, rr("Region scan (production)")$rate, 2)
+add_chk("Supplement S5: production block-level t, share called (0.38)", 0.38, rr("Block-level t (production)")$rate, 2)
+```
+
+### Fitting failures
+
+```{r failures}
+real_e <- raw[cond == "real" & config == "ship_eq"]
+n_marg <- sum(real_e$fit_err != 0)
+surf_fail <- sapply(c("ship_eq", "ship_model"), function(cfg) { x <- raw[cond == "real" & config == cfg]; sum(x$fit_err == 0 & x$surf_err != 0) })
+meta[, `:=`(lo = log(sapply(strsplit(doseA, ";"), function(z) as.numeric(z[2]))),
+            hi = log(sapply(strsplit(doseA, ";"), function(z) as.numeric(z[length(z)]))))]
+re <- merge(real_e, meta[, .(idx = k, lo, hi)], by = "idx")
+bad <- (abs(re$c_h1) > 20 | abs(re$c_h2) > 20 | re$c_e1 < re$lo - 3 | re$c_e1 > re$hi + 3 | re$c_e2 < re$lo - 3 | re$c_e2 > re$hi + 3 |
+        re$c_m1 < -0.5 | re$c_m1 > 1.5 | re$c_m2 < -0.5 | re$c_m2 > 1.5 | re$c_b < 0.5 | re$c_b > 1.5) & re$fit_err == 0
+interior_sd <- local({
+  x <- readBin(result_path("inputs/bigl_comparison_data/real_oneil300.f64"), "double", n = 300 * 4 * 25, endian = "little")
+  a <- array(x, c(5, 5, 4, 300))                         # file order is (matrix, replicate, row, column)
+  median(apply(a[2:5, 2:5, , , drop = FALSE], c(4), function(m) mean(apply(m, c(1, 2), sd))))
+})
+single <- raw[cond == "null" & config == "ship_eq" & grepl("^r1_", setting)]
+single_fail <- single[, .(matrices = .N, marginal = sum(fit_err != 0), surface = sum(fit_err == 0 & surf_err != 0), no_result = mean(!ok)), by = setting][order(setting)]
+tbl(data.frame(
+  quantity = c("real groups", "marginal curve fit failed (default variance)", "Bliss surface failed after a successful marginal fit (range over distributed configurations)",
+               "converged marginal fits", "converged fits with an implausible parameter",
+               "median residual SD of BIGL's marginal fit (SD of the smooth-curve fit)", "median interior replicate SD of the same groups"),
+  value = c(nrow(real_e), n_marg, sprintf("%d to %d", min(surf_fail), max(surf_fail)), sum(real_e$fit_err == 0), sum(bad),
+            f3(median(real_e$sigma0, na.rm = TRUE), 4), f3(interior_sd, 4))), row.names = FALSE)
+tbl(single_fail, caption = "Single-plate exact-Bliss matrices (distributed reference, normal bootstrap errors)")
+add_chk("Abstract/Results: BIGL marginal failures out of 300 groups", 50, n_marg, 0)
+add_chk("Supplement S5: further Bliss-reference failures, lower end", 25, min(surf_fail), 0)
+add_chk("Supplement S5: further Bliss-reference failures, upper end", 48, max(surf_fail), 0)
+add_chk("Supplement S5: converged fits with an extreme parameter", 128, sum(bad), 0)
+add_chk("Supplement S5: marginal residual SD, median", 0.0061, median(real_e$sigma0, na.rm = TRUE), 4)
+add_chk("Supplement S5: interior replicate SD, median (paper: 0.058)", 0.058, interior_sd, 3)
+add_chk("Supplement S5: weak-agent single plates with no BIGL result, lower end (paper: 35%)", 0.35, min(single_fail[grepl("weak", setting)]$no_result), 2)
+add_chk("Supplement S5: weak-agent single plates with no BIGL result, upper end (paper: 59%)", 0.59, max(single_fail[grepl("weak", setting)]$no_result), 2)
+```
+
+### Agreement on the groups both tools analyzed
+
+```{r agreement}
+kappa_tab <- function(x, y) {
+  x <- as.logical(x); y <- as.logical(y); po <- mean(x == y)
+  pe <- mean(x) * mean(y) + (1 - mean(x)) * (1 - mean(y))
+  c(n = length(x), both = sum(x & y), only_SIR = sum(x & !y), only_BIGL = sum(!x & y), neither = sum(!x & !y),
+    agree = po, kappa = (po - pe) / (1 - pe))
+}
+ag <- rbindlist(lapply(c("ship_eq", "ship_model", "vb_eq"), function(cfg) {
+  x <- real[config == cfg][order(idx)]; okx <- x$ok
+  rbind(data.table(configuration = cfg, comparison = "SIR statistic vs BIGL maxR", as.data.table(as.list(kappa_tab(alpha_ok(prod$p_tstd[x$idx + 1])[okx], x$syn05[okx])))),
+        data.table(configuration = cfg, comparison = "Region scan vs BIGL maxR", as.data.table(as.list(kappa_tab(alpha_ok(prod$p_scan[x$idx + 1])[okx], x$syn05[okx])))))
+}))
+tbl(ag[, lapply(.SD, function(z) if (is.numeric(z)) round(z, 3) else z)], row.names = FALSE)
+a225 <- ag[configuration == "ship_model" & comparison == "SIR statistic vs BIGL maxR"]
+add_chk("Supplement S5: agreement of SIR statistic with BIGL (modeled variance) on 225 groups", 0.724, a225$agree)
+add_chk("Supplement S5: Cohen's kappa, same comparison", 0.448, a225$kappa)
+add_chk("Supplement S5: groups with a modeled-variance BIGL result", 225, a225$n, 0)
+```
+
+**What do we see?**
+
+No truth is known for these groups, so the comparison is of call rates. BIGL with its default (equal) variance and BIGL's own Bliss reference calls `r hu(rr("BIGL maxR, distributed, equal variance")$rate, 2)` of the `r rr("BIGL maxR, distributed, equal variance")$n` groups it analyzed. Its residual SD is the lack of fit of a smooth curve to the pooled single-agent values (median `r f3(median(real_e$sigma0, na.rm = TRUE), 4)`), while the interior replicate SD of the same groups is `r f3(interior_sd, 4)`, about `r round(interior_sd / median(real_e$sigma0, na.rm = TRUE))` times larger, so almost any deviation looks significant. With modeled variance BIGL calls `r hu(rr("BIGL maxR, distributed, modeled variance")$rate, 2)` of `r rr("BIGL maxR, distributed, modeled variance")$n` groups; the SIR statistic in the production configuration calls `r hu(rr("SIR statistic (production)")$rate, 2)`, the scan `r hu(rr("Region scan (production)")$rate, 2)` and the block-level $t$ test `r hu(rr("Block-level t (production)")$rate, 2)` of 300. On the 225 groups with a modeled-variance result the SIR statistic and BIGL's maxR agree on `r hu(a225$agree)` of groups (Cohen's $\kappa=$ `r hu(a225$kappa)`); with the default variance the agreement is `r hu(ag[configuration == "ship_eq" & comparison == "SIR statistic vs BIGL maxR"]$agree)` and $\kappa$ is `r hu(ag[configuration == "ship_eq" & comparison == "SIR statistic vs BIGL maxR"]$kappa)`, which is chance level.
+
+BIGL could not be applied to all groups. Its marginal curve fit failed on `r n_marg` of `r nrow(real_e)` groups, its Bliss reference failed on a further `r min(surf_fail)` to `r max(surf_fail)` (one fitted curve rose above baseline while the other fell), and `r sum(bad)` of the `r sum(real_e$fit_err == 0)` converged fits had a parameter outside a plausible range, mostly flat curves with unidentified potency. On single plates with weak agents, BIGL returned no result for `r hu(min(single_fail[grepl("weak", setting)]$no_result), 2)` to `r hu(max(single_fail[grepl("weak", setting)]$no_result), 2)` of the matrices.
+
+## Figure 5 redrawn
+
+```{r fig5-draw, fig.height=9, fig.cap="Main Figure 5, redrawn in R from the tables above. Panel C also shows BIGL maxR (open up triangle) and meanR (open down triangle) at 0.05 and the BIGL maxR synergy label at 0.10 (filled dark triangle), all with the viability reference."}
+MCOL <- c("SIR statistic" = "#0072B2", "Region scan" = "#D55E00", "Mean test (block-level t)" = "#009E73", "Mean test (V2Sp)" = "#009E73",
+          "BIGL maxR, distributed reference" = "#882255", "BIGL meanR, distributed reference" = "#882255",
+          "BIGL maxR, viability reference" = "#CC79A7", "BIGL meanR, viability reference" = "#CC79A7")
+MSHP <- c("SIR statistic" = 16, "Region scan" = 15, "Mean test (block-level t)" = 18, "Mean test (V2Sp)" = 18,
+          "BIGL maxR, distributed reference" = 17, "BIGL meanR, distributed reference" = 25,
+          "BIGL maxR, viability reference" = 2, "BIGL meanR, viability reference" = 6)
+size_plot <- function(rr, lab) {
+  d <- size_rows[size_rows$r == rr]
+  d[, setting := factor(setting, levels = settings)]
+  ggplot(d, aes(setting, pmax(rate, 0.001), color = method, shape = method)) +
+    geom_hline(yintercept = 0.05, linetype = 2, color = "grey40") +
+    geom_pointrange(aes(ymin = pmax(lo, 0.001), ymax = pmax(hi, 0.001)), position = position_dodge(width = 0.8), size = 0.25) +
+    scale_y_log10(limits = c(0.001, 1)) + scale_color_manual(values = MCOL, name = NULL) + scale_shape_manual(values = MSHP, name = NULL) +
+    scale_x_discrete(labels = function(x) gsub("_", "\n", x)) +
+    labs(x = lab, y = expression("Rejection rate at " * alpha * " = 0.05"))
+}
+pA <- size_plot(4, "Single agents and noise, 4 replicates")
+pB <- size_plot(1, "Single agents and noise, 1 replicate") + labs(y = NULL)
+pl <- melt(pow_rows, id.vars = c("cond", "setting", "n"), variable.name = "method", value.name = "rate")
+pl <- pl[, .(mean = mean(rate), lo = min(rate), hi = max(rate)), by = .(cond, method)]
+pl[, cond := factor(cond, levels = ALTS, labels = gsub(" ", "\n", ALT_LAB[ALTS]))]
+pC <- ggplot(pl, aes(cond, mean, color = method, shape = method)) + geom_hline(yintercept = 0.05, linetype = 2, color = "grey40") +
+  geom_pointrange(aes(ymin = lo, ymax = hi), position = position_dodge(width = 0.7), size = 0.25) +
+  scale_color_manual(values = c(MCOL[1:3], "BIGL maxR, viability reference, 0.05" = "#CC79A7", "BIGL meanR, viability reference" = "#CC79A7", "BIGL maxR, viability reference, 0.10" = "#882255"), name = NULL) +
+  scale_shape_manual(values = c(16, 15, 18, 2, 6, 17), name = NULL) +
+  labs(x = "Truth, 4 replicates", y = expression("Rejection rate at " * alpha * " = 0.05"))
+rd_ <- copy(real_rows); rd_[, method := factor(method, levels = rev(method))]
+pD <- ggplot(rd_, aes(rate, method)) + geom_pointrange(aes(xmin = lo, xmax = hi), size = 0.3) +
+  geom_text(aes(x = 1.03, label = n), hjust = 0, size = 3) + coord_cartesian(xlim = c(0, 1.12)) +
+  labs(x = expression("Call rate at " * alpha * " = 0.05"), y = NULL)
+((pA + theme(legend.position = "bottom", legend.text = element_text(size = 7)) + guides(color = guide_legend(nrow = 4), shape = guide_legend(nrow = 4)) | pB + theme(legend.position = "none")) /
+   (pC + theme(legend.position = "none") | pD)) + plot_annotation(tag_levels = list(c("A.", "B.", "C.", "D.")))
+```
+
+## Runtime
+
+```{r runtime}
+bt <- rd("inputs/bigl_runtime.csv")
+tbl(bt[, .(method, replicates = r, matrices = n, `median (s)` = round(median, 3), `mean (s)` = round(mean, 3), `95th percentile (s)` = round(p95, 3))], row.names = FALSE)
+ours_rt <- rbindlist(lapply(c("r4", "r1"), function(k) { x <- summ_json$runtime_ours[[k]]
+  data.table(replicates = as.integer(sub("r", "", k)), matrices = x$n, `median (s)` = x$median, `mean (s)` = x$mean, `95th percentile (s)` = x$p95) }))
+tbl(ours_rt, digits = 4, caption = "SIR statistic with region scan and mean test, one core (B = 399 plus 200 scan plates)")
+rg <- rd("runtime/runtime_grid.csv"); rr_ <- rd("runtime/runtime_r_only.csv")
+cat("Package call on one 5x5 matrix, B = 399, median ms: Python",
+    round(rg[engine == "Python" & design == "S" & rows == 5 & B == 399]$median_ms, 1),
+    "; through the R interface", round(rr_[design == "S" & rows == 5 & B == 399]$median_ms, 1), "\n")
+bt4 <- bt[r == 4 & grepl("ship_eq|vb_eq|vb_model", method)]
+t_ours <- sort(c(summ_json$runtime_ours$r1$median, summ_json$runtime_ours$r4$median))
+add_chk("Table S5: our time per matrix, one core, lower end (s)", 0.005, t_ours[1], 3)
+add_chk("Table S5: our time per matrix, one core, upper end (s)", 0.011, t_ours[2], 3)
+add_chk("Table S5: BIGL median time per matrix, four replicates, lower end (s; paper 0.4)", 0.4, min(bt4$median), 1)
+add_chk("Table S5: BIGL median time per matrix, four replicates, upper end (s; paper 0.5)", 0.5, max(bt4$median), 1)
+add_chk("Results: package time per 5x5 matrix at B = 399, Python call (ms; paper 2.9)", 2.9, rg[engine == "Python" & design == "S" & rows == 5 & B == 399]$median_ms, 1)
+add_chk("Results: package time per 5x5 matrix at B = 399, R interface (ms; paper 5)", 5, rr_[design == "S" & rows == 5 & B == 399]$median_ms, 0)
+```
+
+The SIR test, including the region scan and the mean test, takes a median of `r f3(t_ours[1], 4)` s per matrix with one replicate and `r f3(t_ours[2], 4)` s with four on one core, and the package takes `r round(rg[engine == "Python" & design == "S" & rows == 5 & B == 399]$median_ms, 1)` ms through Python and `r round(rr_[design == "S" & rows == 5 & B == 399]$median_ms, 1)` ms through the R interface for a $5\times5$ matrix at $B=399$. BIGL with 100 bootstrap samples has a median of `r f3(min(bt4$median), 2)` to `r f3(max(bt4$median), 2)` s with four replicates and `r f3(min(bt[r == 1 & !grepl("residual", method)]$median), 2)` to `r f3(max(bt[r == 1 & !grepl("residual", method)]$median), 2)` s with one, a ratio of roughly `r round(min(bt4$median) / t_ours[2])` to `r round(max(bt[r == 1 & !grepl("residual", method)]$median) / t_ours[1])` to one. Table S5 and the paper report the four-replicate median range, 0.4 to 0.5 s; the tail is longer (95th percentiles `r f3(min(bt4$p95), 2)` to `r f3(max(bt4$p95), 2)` s). Timings depend on hardware.
+
+## Rebuilding Table S5
+
+```{r table-s5}
+rng3 <- function(v) sprintf("%s to %s", f3(min(v)), f3(max(v)))
+pp <- function(cd) sprintf("%s / %s / %s", f3(pm(cd, "SIR statistic")), f3(pm(cd, "Region scan")), f3(pm(cd, "BIGL maxR, viability reference, 0.10")))
+s5 <- list(
+  c("BIGL as distributed, maxR synergy label, exact viability Bliss (weak/moderate agents, Gaussian)", rng3(bigl_dist_pg)),
+  c("BIGL as distributed, synergy label under 10% antagonism (moderate agents, Gaussian)", f3(ant_dist)),
+  c("BIGL patched, two-sided maxR (rank rule) at exact Bliss", rng3(patched_any)),
+  c("BIGL patched, meanR at exact Bliss", rng3(patched_mean)),
+  c("T_SIR at exact Bliss (true noise law)", rng3(r4_tstd)),
+  c("Region scan at exact Bliss (true noise law)", rng3(r4_scan)),
+  c("Power, broad: T_SIR / region scan / patched maxR at 0.10", pp("syn_broad_0.10")),
+  c("Power, high dose", pp("syn_highdose_0.40")),
+  c("Power, single top-corner cell", pp("syn_corner_0.60")),
+  c("Power, saturating", pp("sat_0.25")),
+  c("Real O'Neil groups: marginal fit failures", sprintf("%d of %d", n_marg, nrow(real_e))),
+  c("Real O'Neil groups: further Bliss-reference failures", sprintf("%d to %d", min(surf_fail), max(surf_fail))),
+  c("Runtime per matrix, BIGL (B=100) vs T_SIR with region scan (B=399+200, one core)",
+    sprintf("%.1f to %.0f s vs %s to %s s", min(bt4$median), min(bt4$p95), f3(t_ours[1]), f3(t_ours[2]))))
+tbl(data.frame(Quantity = sapply(s5, `[`, 1), Value = sapply(s5, `[`, 2)), row.names = FALSE)
+cat("Value column identical to tables/tabS5_bigl.tex:",
+    tex_same(lapply(s5, function(x) x[2]), "tables/tabS5_bigl.tex"), "\n")
+```
+
+# Other tools: SynergyFinder Plus pooling and the Demidenko-Miller test
+
+Both tools were implemented from their published descriptions and run on exact-Bliss data with no synergy anywhere; their outputs are present in the pipeline.
+
+```{r other-tools}
+pool <- rd("simulations/pooling_size.csv")
+cn   <- read_result("simulations/comparator_numbers.json")
+dm   <- rd("simulations/complete_pairwise_size.csv"); dm[, control_noise := as.character(control_noise) %in% c("True", "TRUE")]
+poolP <- pool[design == "P"]
+emp <- poolP[noise == "V" & level == 1]
+analytic_exact <- pt(qnorm(0.95), 15, lower.tail = FALSE)
+analytic_round <- pt(1.644, 15, lower.tail = FALSE)
+tbl(data.frame(
+  quantity = c("SynergyFinder Plus pooling, exact single agents: size at nominal 0.05, empirical noise at its measured scale (maximum over grids and agent surfaces)",
+               "same, maximum over every noise scale and law tested", "same at nominal 0.005 (maximum over every noise scale and law)",
+               "analytic size of the pooled statistic with 15 degrees of freedom referred to a normal critical value",
+               "same with the critical value rounded to 1.644",
+               "block-level t on replicate plates (our companion test), maximum size at 0.05",
+               "Demidenko-Miller, size at 0.05 when the top single-agent dose lowers log viability by 0.5 (with control noise)",
+               "same, no spread of single-agent effect (0)"),
+  value = c(hu(max(emp$rate05), 4), hu(max(poolP$rate05), 4), hu(max(poolP$rate005), 4), hu(analytic_exact, 4), hu(analytic_round, 4),
+            hu(max(pool[design == "R1"]$rate05), 4), hu(dm[single_agent_log_spread == 0.5 & control_noise]$size_demidenko_miller, 5),
+            hu(dm[single_agent_log_spread == 0 & control_noise]$size_demidenko_miller, 4))), row.names = FALSE)
+tbl(dm[, .(`single-agent log-viability spread` = single_agent_log_spread, `control well noisy` = control_noise,
+           datasets = n, `size at 0.05` = size_demidenko_miller)], row.names = FALSE)
+add_chk("Results: SynergyFinder Plus pooling size at 0.05, empirical noise level", 0.070, max(emp$rate05))
+add_chk("Supplement S5: SynergyFinder Plus pooling at 0.005, maximum", 0.017, max(poolP$rate005))
+add_chk("Supplement S5: SynergyFinder Plus pooling at 0.05, maximum over noise scales (0.071)", 0.071, max(poolP$rate05))
+add_chk("Supplement S5: analytic size at 15 degrees of freedom, rounded critical value", 0.0605, analytic_round, 4)
+add_chk("Supplement S5: analytic size at 15 degrees of freedom (0.0604)", 0.0604, analytic_exact, 4)
+add_chk("Results: Demidenko-Miller size, top dose lowers log viability by 0.5", 0.0003, dm[single_agent_log_spread == 0.5 & control_noise]$size_demidenko_miller, 4)
+```
+
+SynergyFinder Plus pooling is mildly liberal even with exact single agents: `r hu(max(emp$rate05), 3)` at nominal 0.05 at the empirical noise level (`r hu(max(poolP$rate05), 3)` at the worst noise scale) and `r hu(max(poolP$rate005), 3)` at nominal 0.005. Much of the excess is analytic: referring a statistic with 15 degrees of freedom to a normal critical value gives size `r hu(analytic_exact, 4)` (`r hu(analytic_round, 4)` with the cutoff 1.644), because a $t$ statistic with few degrees of freedom has heavier tails than the normal. Our block-level $t$ test on replicate plates uses the $t$ reference and has maximum size `r hu(max(pool[design == "R1"]$rate05), 4)`. The Demidenko-Miller test is conservative when the single agents are active: its size is `r hu(dm[single_agent_log_spread == 0 & control_noise]$size_demidenko_miller, 4)` when the single agents are inert, `r hu(dm[single_agent_log_spread == 0.25 & control_noise]$size_demidenko_miller, 4)` when the top dose lowers log viability by 0.25, `r hu(dm[single_agent_log_spread == 0.5 & control_noise]$size_demidenko_miller, 5)` at 0.5 (0.0003 at the precision of the paper) and zero beyond, because the dose-response trend of each arm enters its pooled variance and inflates the denominator.
+
+# How to use the code
+
+The SIR test on replicate plates takes an array with dimensions `c(replicates, rows, columns)` and `design = "R"`. The chunk below simulates matrices at exact viability Bliss with partial agents ($E=0.7$), four replicate plates and Gaussian noise of SD 0.08, tests them with the matched reference, and prints the offset that BIGL's Bliss function would add to the same matrices.
+
+```{r usage}
+set.seed(31415)
+Ehat <- 0.7
+f <- hill(dose4)
+a_e <- c(1, 1 - Ehat * f); b_e <- a_e
+mu_e <- outer(a_e, b_e)
+noise4 <- sir_noise_parametric(sd = 0.08)
+sim_stack <- function() {
+  Y <- array(NA_real_, c(4, 5, 5))
+  for (r in 1:4) { Y[r, , ] <- mu_e + matrix(rnorm(25, sd = 0.08), 5); Y[r, 1, 1] <- 1 }
+  Y
+}
+t_use <- system.time({
+  p_sir <- vapply(seq_len(400), function(i) {
+    sir_fit(sim_stack(), design = "R", noise = noise4, B = 199L, two_stage = FALSE, seed = i,
+            normalize = "ignore", fragility = "never")$p_tstd
+  }, numeric(1))
+})
+bigl_offset <- outer(f, f, function(x, y) Ehat * (1 - Ehat) * x * y)
+tbl(data.frame(
+  quantity = c("exact-Bliss matrices tested (E = 0.7, four replicates)", "SIR statistic rejection rate at level 0.05",
+               "Monte Carlo standard error", "mean offset of BIGL's Bliss surface above the viability product, per cell",
+               "same offset in units of the SD of a four-plate mean (0.08 / 2)"),
+  value = c(length(p_sir), hu(mean(p_sir <= 0.05)), hu(sqrt(mean(p_sir <= 0.05) * (1 - mean(p_sir <= 0.05)) / length(p_sir))),
+            hu(mean(bigl_offset), 4), f3(mean(bigl_offset) / 0.04, 2))), row.names = FALSE)
+cat("Elapsed:", round(t_use[["elapsed"]], 1), "seconds for 400 fits with 199 reference plates\n")
+```
+
+With the matched reference the SIR statistic rejects `r hu(mean(p_sir <= 0.05))` of the `r length(p_sir)` exact-Bliss matrices with partial agents (standard error `r hu(sqrt(mean(p_sir <= 0.05) * (1 - mean(p_sir <= 0.05)) / length(p_sir)))`), consistent with nominal 0.05. BIGL's Bliss surface for the same agents lies on average `r hu(mean(bigl_offset), 4)` above the viability product in each cell, which is `r f3(mean(bigl_offset) / 0.04, 2)` standard deviations of a four-plate mean, and that offset is what BIGL as distributed reads as synergy.
+
+A screen of many matrices uses `sir_screen()`, and `?sir_fit` documents the design, noise and replicate arguments. The BIGL side of this comparison was computed with `reproduce/stages/03_simulations/bigl.R`, which needs the CRAN package BIGL; its saved outputs are what this notebook reads.
+
+# Conclusions
+
+**What we found.** BIGL's Bliss reference equals the viability product only when the stronger agent's fitted asymptote is zero. For partial agents it lies above the product by $E(1-E)f_1f_2$ for identical agents, a mean of `r hu(gap03, 4)` over a $5\times5$ grid at $E=0.3$ or 0.7, and BIGL as distributed labels synergy in `r hu(min(k_dist))` to `r hu(max(k_dist))` of exact-Bliss matrices with weak or moderate agents and Gaussian noise. With the reference matched, BIGL's inference is close to calibrated (`r hu(min(patched_any))` to `r hu(max(patched_any))` for the two-sided maxR) and the comparison reduces to power: the SIR statistic is stronger for broad, high-dose and saturating synergy (`r hu(pm("syn_broad_0.10", "SIR statistic"))` to `r hu(pm("sat_0.25", "SIR statistic"))` against `r hu(pm("syn_highdose_0.40", "BIGL maxR, viability reference, 0.10"))` to `r hu(pm("syn_broad_0.10", "BIGL maxR, viability reference, 0.10"))`), BIGL's pointwise test is stronger for a single corner cell (`r hu(pm("syn_corner_0.60", "BIGL maxR, viability reference, 0.10"))` against `r hu(pm("syn_corner_0.60", "SIR statistic"))`), and the region scan closes that gap (`r hu(pm("syn_corner_0.60", "Region scan"))`). On real O'Neil replicate plates BIGL's default variance makes almost every group look synergistic, its curve fits fail on `r n_marg` of 300 groups, and it is roughly `r round(min(bt4$median) / t_ours[2])` to `r round(max(bt[r == 1 & !grepl("residual", method)]$median) / t_ours[1])` times slower. SynergyFinder Plus pooling is mildly liberal (`r hu(max(emp$rate05), 3)` at 0.05) and the Demidenko-Miller test is conservative when single agents are active.
+
+**What it means.** A comparison between tools is a comparison of null surfaces first. When both tools use the same Bliss reference, the SIR statistic and BIGL's maxR have complementary strengths, and the region scan covers localized synergy.
+
+**Limits, as stated in the paper.** The simulated single agents are exact four-parameter logistic curves, BIGL's own marginal model, which favors BIGL. No truth is known for the real O'Neil groups, so call rates there are not error rates. The BIGL results use BIGL 1.9.3 with its documented settings and 100 bootstrap samples; its one-sided counterpart is taken as the maxR synergy label at level 0.10. SynergyFinder Plus pooling and the Demidenko-Miller test were implemented from their descriptions, and their sizes are those of our implementations. Runtimes depend on hardware.
+
+**What to report.** The Bliss reference used by any comparator (viability product or BIGL's function), the noise model and variance method, the level at which each tool's label is taken (two-sided 0.05 or the one-sided 0.10 label), the number of matrices with no result for each tool, and the shape of the synergy against which power is assessed.
+
+# Paper numbers recomputed in this notebook
+
+```{r paper-checks}
+chk$paper_txt <- mapply(function(x, d) formatC(x, format = "f", digits = d), chk$paper, chk$digits)
+chk$computed_txt <- mapply(function(x, d) formatC(x, format = "f", digits = d + 2), chk$computed, chk$digits)
+tbl(data.frame(number = chk$item, paper = chk$paper_txt, computed = chk$computed_txt,
+               agrees = ifelse(chk$match, "yes", "NO")), row.names = FALSE) %>%
+  row_spec(which(!chk$match), bold = TRUE, color = "white", background = "#b22222")
+cat(sum(chk$match), "of", nrow(chk), "numbers agree with the paper at the printed precision.\n")
+```

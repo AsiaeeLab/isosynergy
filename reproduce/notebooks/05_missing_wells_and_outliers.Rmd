@@ -1,0 +1,922 @@
+---
+title: "Missing wells, gross errors and weak monotonicity violations"
+subtitle: "Reproducing main Figure 6 and Supplementary Table S6 from the simulation outputs"
+author: "The SIR authors"
+date: "`r format(Sys.Date(), '%B %d, %Y')`"
+output:
+  html_document:
+    theme: flatly
+    toc: true
+    toc_float:
+      collapsed: false
+    toc_depth: 3
+    number_sections: true
+    code_folding: hide
+    fig_width: 9
+    fig_height: 5
+    df_print: kable
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE, comment = "#>")
+suppressPackageStartupMessages({
+  library(ggplot2); library(dplyr); library(tidyr); library(kableExtra)
+  library(jsonlite); library(reticulate); library(patchwork); library(scales)
+  library(SIR)
+})
+source("_common.R")
+SIM <- "simulations"
+REAL <- "realdata"
+
+theme_set(theme_report)
+pal <- c(blue = "#0072B2", light = "#56B4E9", red = "#B2182B", gray = "#595959")
+
+kb <- function(x, digits = 4, ...) {
+  kbl(x, digits = digits, ...) %>%
+    kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE)
+}
+
+options(knitr.kable.NA = "")
+pd <- import("pandas")
+read_parquet <- function(rel) read_result(rel)
+
+# Wilson 95% interval for k successes out of n
+wilson <- function(k, n, z = 1.959964) {
+  p <- k / n
+  den <- 1 + z^2 / n
+  ctr <- (p + z^2 / (2 * n)) / den
+  hw <- z * sqrt(p * (1 - p) / n + z^2 / (4 * n^2)) / den
+  data.frame(rate = p, lo = ctr - hw, hi = ctr + hw)
+}
+
+# Rejection indicator. The stored p-values are multiples of 1/(B+1) kept in single
+# precision, so a p-value of exactly 0.05 is stored as 0.05000000075; it counts as a
+# rejection, as in the pipeline scripts.
+le <- function(p, alpha) p <= alpha * (1 + 1e-6)
+
+f3 <- function(x) sprintf("%.3f", x)
+f4 <- function(x) sprintf("%.4f", x)
+pct1 <- function(x) sprintf("%.1f%%", 100 * x)
+
+# Running list of comparisons with the numbers printed in the paper
+CHECKS <- data.frame(item = character(), paper = numeric(), computed = numeric(),
+                     tol = numeric(), stringsAsFactors = FALSE)
+check <- function(item, paper, computed, tol) {
+  CHECKS[nrow(CHECKS) + 1, ] <<- list(item, paper, computed, tol)
+  invisible(computed)
+}
+
+```
+
+# Summary
+
+```{r summary-numbers, include=FALSE}
+.sz <- read_parquet(file.path(SIM, "fig6_missing_size.parquet"))
+.ss <- read_parquet(file.path(SIM, "fig6_screen_size.parquet"))
+.ms <- read_parquet(file.path(SIM, "fig6_monotone_size.parquet"))
+.pw <- read_parquet(file.path(SIM, "fig6_missing_power.parquet"))
+.mw <- read_result(file.path(REAL, "missing_well_summary.json"))
+.rate <- function(p) mean(p <= 0.05 * (1 + 1e-6))
+.sr <- sapply(c("full", "int1", "int2", "int3", "rowdrop"), function(t) .rate(.sz[[paste0("p_", t)]]))
+.scr <- function(arm, lev) .rate(.ss$p[.ss$arm == arm & as.numeric(.ss$level) == lev])
+.pl <- function(t) {
+  g <- .pw %>% group_by(I, law, surface, cond) %>%
+    summarise(a = .rate(p_full), b = .rate(.data[[paste0("p_", t)]]), .groups = "drop")
+  mean(g$a - g$b)
+}
+.nm <- .ms[.ms$design == "S" & as.logical(.ms$nonmono_truth), ] %>% group_by(I, law, surface, cond) %>%
+  summarise(r = .rate(p), .groups = "drop")
+.bs <- .ms[.ms$design == "S" & .ms$surface == "base" & .ms$cond == "null", ]
+```
+
+**Missing combination wells, a missing single-agent well and weak departures from monotonicity leave the false-positive rate of the SIR test where it was on the complete, monotone grid, and a missing well costs power in proportion to the information removed. Gross single-replicate errors are the one imperfection that does inflate the rate (up to `r f4(.scr("noscreen", 0.02))` at 2% of wells, against 0.05 nominal), and the replicate screen restores it to `r f4(.scr("screen", 0.02))` at no cost on clean data.**
+
+```{r summary-table, echo=FALSE}
+sumtab <- data.frame(
+  Imperfection = c("Complete grid (reference)", "1, 2, 3 combination wells missing", "Single-agent dose row dropped",
+                   "Mean power loss, 1, 2, 3 missing wells", "Mean power loss, dose row dropped",
+                   "Gross errors in 0.4% of wells", "Gross errors in 2% of wells",
+                   "Held-out well error (median RMSE)", "Non-monotone truths (hormesis, reversals)"),
+  Quantity = c("Size at 0.05", "Size at 0.05", "Size at 0.05", "Power change at 0.05", "Power change at 0.05",
+               "Size at 0.05, no screen / screen", "Size at 0.05, no screen / screen",
+               "Isotonic bounds / Bliss prediction", "Largest design-S size / monotone baseline"),
+  Value = c(f4(.sr[["full"]]),
+            paste(f4(.sr[["int1"]]), f4(.sr[["int2"]]), f4(.sr[["int3"]]), sep = " / "),
+            f4(.sr[["rowdrop"]]),
+            paste(f3(-.pl("int1")), f3(-.pl("int2")), f3(-.pl("int3")), sep = " / "),
+            f3(-.pl("rowdrop")),
+            paste(f4(.scr("noscreen", 0.004)), f4(.scr("screen", 0.004)), sep = " / "),
+            paste(f4(.scr("noscreen", 0.02)), f4(.scr("screen", 0.02)), sep = " / "),
+            paste(f3(.mw$median_rmse_iso), f3(.mw$median_rmse_bliss), sep = " / "),
+            paste(f4(max(.nm$r)), f4(.rate(.bs$p)), sep = " / ")))
+kb(sumtab, row.names = FALSE)
+```
+
+All numbers in the table were computed from the simulation outputs when this page was knit; the last section compares each with the value printed in the paper.
+
+# The question
+
+## Background
+
+A drug-combination screen measures cell viability on a small dose grid: one drug along the rows, the other along the columns, with the zero-dose row and column holding the single-agent measurements. SIR asks whether the combination wells kill more than the Bliss independence prediction, where the expected viability of a combination is the product of the two single-agent viabilities, $\mathbb{E}\,Y_{ij} = \mathbb{E}\,Y_{i0}\,\mathbb{E}\,Y_{0j}$.
+
+Real plates are imperfect. Wells fail and are left empty. A single reading can be wrong by far more than the usual measurement noise (a pipetting error, an edge effect, a bubble). Dose responses are only approximately monotone: low doses sometimes raise viability above the untreated control (hormesis), and a dose can read slightly higher than the next lower one. The method assumes monotone responses, so we need to know what these departures do to the error rates that the rest of the paper establishes on clean plates.
+
+> **Question.** Do missing wells, gross single-replicate errors and weak departures from monotonicity change the rejection rate of the SIR test at exact Bliss independence, and how much power do missing wells cost?
+
+## Why it is hard
+
+The calibration argument for the SIR test (a least-favorable-null result plus a plug-in reference built from the fitted single-agent curves) is exact for complete grids and for summaries of replicates that are nondecreasing in each replicate. Each of the three imperfections breaks one piece of it:
+
+- a missing combination well changes the set of cells the order constraint and the statistic act on;
+- a missing single-agent well removes a whole row or column of the Bliss prediction;
+- a screen that drops discrepant replicates is not nondecreasing in each replicate, so the theorem does not cover it, and its level has to be measured by simulation;
+- a non-monotone truth lies outside the null that the monotone projection assumes.
+
+The notebook reproduces the simulation evidence for each point and shows the package calls that handle them.
+
+# The method and the math
+
+## Restricted isotonic fit on the observed cells
+
+Write $O$ for the set of observed combination cells, $i,j \ge 1$. Viability is nonincreasing in each dose, so the fitted surface $\hat\mu$ solves the isotonic regression problem on the observed cells only:
+
+$$
+\hat\mu = \arg\min_{m}\ \sum_{(i,j)\in O} (Y_{ij}-m_{ij})^2 \quad\text{subject to}\quad m_{ij}\ \text{nonincreasing in } i \text{ and in } j,
+$$
+
+where the order constraints are the dose order restricted to $O$ (two observed cells are compared whenever one has doses at least as large as the other in both coordinates). This is a projection onto a closed convex cone, so the fit is unique and exact, and a missing cell is bounded between the fitted values of its observed lower-dose and higher-dose neighbors without being imputed. The SIR statistic sums over observed cells only,
+
+$$
+T_{\mathrm{SIR}} = \sum_{(i,j)\in O}\left(\frac{\hat a_i \hat b_j - \hat\mu_{ij}}{s(\hat a_i\hat b_j)}\right)_+^{2},
+$$
+
+where $\hat a_i, \hat b_j$ are the fitted single-agent curves, $s$ is the noise SD at the Bliss prediction, and $(\cdot)_+$ is the positive part. Every reference plate in the plug-in bootstrap is drawn at exact Bliss and carries the same missingness pattern as the analyzed plate, so the p-value compares like with like. (In the package the same statistic is the field `t_std`.)
+
+A **missing single-agent well** leaves the Bliss prediction undefined for its whole row or column. The method drops that row or column and analyzes the remaining $(I-1)\times J$ grid, with a reference built on the same reduced grid.
+
+## The replicate screen
+
+With replicate plates, the replicate $k$ at well $(i,j)$ is dropped when it sits more than $c=5$ model SDs from the median of the other replicates at that well:
+
+$$
+\left| Y^{(k)}_{ij} - \operatorname{med}_{k'\ne k} Y^{(k')}_{ij}\right| > c\, s_1 ,
+$$
+
+with $s_1$ the single-replicate SD of the noise model at that well; at most one replicate per well is dropped. The same rule is applied, unchanged, to every reference plate. Single plates are not screened: with one measurement a gross error and genuine synergy cannot be told apart.
+
+The theorem on the least favorable null covers summaries that are nondecreasing in each replicate, such as the mean or the median. The screen is not one of them. The next block shows why with three replicates of one well.
+
+```{r screen-example, fig.height=3.6}
+screened_mean <- function(x, others = c(0.80, 0.82), s1 = 0.02, c = 5) {
+  y <- c(others, x)
+  dev <- sapply(seq_along(y), function(k) abs(y[k] - median(y[-k])))
+  flagged <- dev > c * s1
+  if (any(flagged)) y <- y[-which.max(ifelse(flagged, dev, -Inf))]
+  mean(y)
+}
+x <- seq(0.70, 1.20, by = 0.001)
+ex <- data.frame(x = x,
+                 mean = sapply(x, function(v) mean(c(0.80, 0.82, v))),
+                 screened = sapply(x, screened_mean),
+                 median = sapply(x, function(v) median(c(0.80, 0.82, v))))
+ex_long <- pivot_longer(ex, -x, names_to = "summary", values_to = "value")
+ggplot(ex_long, aes(x, value, color = summary)) +
+  geom_line(linewidth = 0.9) +
+  scale_color_manual(values = c(mean = pal[["light"]], median = pal[["gray"]], screened = pal[["red"]])) +
+  labs(x = "Third replicate at the well", y = "Summary of the three replicates", color = NULL)
+peak_at <- ex$x[which.max(ex$screened)]
+```
+
+The mean and the median rise with the third replicate, as the theorem requires. The screened mean follows the plain mean while the third replicate is within the cutoff of the median of the other two ($5\times 0.02 = 0.10$, so from 0.71 to 0.91), and equals the mean of the other two, `r round(screened_mean(1.2), 2)`, outside that range. At the upper end it peaks at `r round(max(ex$screened), 3)` when the third replicate is `r round(peak_at, 2)` and then falls back to `r round(screened_mean(1.2), 2)` once that replicate is discarded. A summary that is not monotone in the replicates falls outside the least-favorable-null argument, so we measured its effect on the level directly (Panels C and D below).
+
+## Fragility flags
+
+For a significant single-plate call the package asks two questions: does the call survive when the most influential combination cell is set to missing, and does it survive when the most influential single-agent dose row (or column) is dropped? A call that does not survive is flagged. These flags describe how much a call depends on single measurements. They do not test for outliers.
+
+## Weak monotonicity violations
+
+The single-agent fits and the surface fit are monotone projections, so a hormetic or reversed truth is smoothed to its closest monotone curve. The Bliss prediction is then built on the smoothed curves while the truth is built on the raw ones. The question is whether the rejection rate at exact Bliss, relative to the true non-monotone single-agent curves, rises above its value for monotone truths.
+
+# The data
+
+The inputs are the Monte Carlo outputs of stage 03 (`sim_missing.py`, `sim_screen.py`, `sim_screen_bank.py`, `sim_fragility.py`, `sim_monotone.py`) and the real-data hold-out summary of stage 02. We do not rerun any simulation here.
+
+```{r load}
+files <- c(size = "fig6_missing_size", power = "fig6_missing_power",
+           screen_size = "fig6_screen_size", bank = "fig6_screen_bank",
+           screen_power = "fig6_screen_power", fragility = "fig6_fragility",
+           mono_size = "fig6_monotone_size", mono_power = "fig6_monotone_power")
+D <- lapply(files, function(f) read_parquet(file.path(SIM, paste0(f, ".parquet"))))
+inv <- data.frame(table = names(D), file = paste0(files, ".parquet"),
+                  rows = sapply(D, nrow), columns = sapply(D, ncol))
+kb(inv, row.names = FALSE, format.args = list(big.mark = ","))
+```
+
+```{r columns}
+glimpse_cols <- function(d) paste(names(d), collapse = ", ")
+cat("Missing-well size table (one row per simulated dataset):\n", glimpse_cols(D$size), "\n\n")
+cat("Screen size table:\n", glimpse_cols(D$screen_size), "\n")
+```
+
+Each size row is one simulated design-S dataset (single agents on the plate), with the Bliss surface exact, so a rejection at 0.05 is a false positive. The `p_*` columns are the p-values of the same dataset after each treatment: complete grid (`p_full`), 1, 2 or 3 combination wells removed at random (`p_int1`, `p_int2`, `p_int3`) and one single-agent well removed with its dose row dropped (`p_rowdrop`). Pairing the treatments on one dataset is what makes the paired differences in Table S6 precise. The stored p-values are multiples of $1/(B+1)$ held in single precision, so a p-value of exactly 0.05 is stored as 0.05000000075; as in the pipeline scripts, such a value counts as a rejection at 0.05, and the helper `le()` used below applies the same rule.
+
+```{r completeness}
+comp <- data.frame(
+  check = c("size datasets", "grids", "noise laws", "single-agent surfaces",
+            "missing p-values in the size table",
+            "power settings (grid x law x surface x pattern)",
+            "screen size rows (datasets x 2 arms x 4 error levels)"),
+  value = c(nrow(D$size), paste(sort(unique(D$size$I)), collapse = ", "),
+            paste(sort(unique(D$size$law)), collapse = ", "),
+            paste(sort(unique(D$size$surface)), collapse = ", "),
+            sum(is.na(D$size[, grep("^p_", names(D$size))])),
+            nrow(unique(D$power[, c("I", "law", "surface", "cond")])),
+            nrow(D$screen_size)))
+kb(comp, row.names = FALSE)
+```
+
+The size table has 36,000 datasets (2 grids, 3 noise laws, 3 single-agent surfaces, 2,000 datasets each), and the power table has 72 settings of 1,000 datasets, which are the counts quoted in the Table S6 caption.
+
+# Figure 6 in outline
+
+Figure 6 has six panels, one per imperfection: A, missing wells and size; B, power with missing wells; C, gross errors and the replicate screen (size); D, the screen and power; E, fragility flags for single plates; F, weak departures from monotonicity. Each panel is drawn below from its table, in the order A to F, and the assembled figure closes the sections on panels.
+
+# Panel A and Table S6: missing wells keep the level
+
+## Rationale
+
+If treating missing combination wells as missing is correct, the rejection rate at exact Bliss should stay near its value on the complete grid. We check this in two ways: the pooled rate for 1, 2 and 3 missing wells, and the paired difference to the complete grid on the same dataset.
+
+## Rebuilding the rates
+
+```{r panelA}
+tests <- c(full = "None", int1 = "1 combination well missing",
+           int2 = "2 combination wells missing", int3 = "3 combination wells missing",
+           rowdrop = "Single-agent dose row dropped")
+size <- D$size
+A <- bind_rows(lapply(c(5, 4), function(I) {
+  z <- size[size$I == I, ]
+  k <- sapply(names(tests), function(t) sum(le(z[[paste0("p_", t)]], 0.05)))
+  cbind(data.frame(grid = paste0(I, "x", I), test = names(tests), label = unname(tests), k = k, n = nrow(z)),
+        wilson(k, nrow(z)))
+}))
+fig6_json <- read_result(file.path(SIM, "fig6_numbers.json"))
+A$json <- mapply(function(g, t) fig6_json[[paste0("A_", g)]][[t]], A$grid, A$test)
+A$diff_from_json <- A$rate - A$json
+kb(A[, c("grid", "label", "k", "n", "rate", "lo", "hi", "diff_from_json")], row.names = FALSE)
+```
+
+```{r panelA-plot, fig.height=3.6}
+A$label <- factor(A$label, levels = rev(tests))
+pA <- ggplot(A, aes(rate, label, color = grid, shape = grid)) +
+  geom_vline(xintercept = 0.05, linetype = 2, color = "gray50") +
+  geom_pointrange(aes(xmin = lo, xmax = hi), position = position_dodge(width = 0.5)) +
+  scale_x_log10(breaks = c(0.03, 0.04, 0.05), limits = c(0.03, 0.055)) +
+  scale_color_manual(values = c("4x4" = pal[["gray"]], "5x5" = pal[["blue"]])) +
+  labs(x = expression("Rejection rate at exact Bliss ("*alpha==0.05*")"), y = NULL, color = "Grid", shape = "Grid")
+pA
+```
+
+The R rate matches the value stored in `fig6_numbers.json` for every row (largest absolute difference `r format(max(abs(A$diff_from_json)), digits = 2)`).
+
+## Table S6
+
+Table S6 pools the two grids (36,000 datasets per row), adds the rejection rate at 0.01, the paired difference against the complete grid on the same datasets, and the mean change in power over the 72 synergy settings.
+
+```{r tabS6}
+power <- D$power
+pw <- function(key) {
+  power %>% group_by(I, law, surface, cond) %>%
+    summarise(r = mean(le(.data[[paste0("p_", key)]], 0.05)), .groups = "drop")
+}
+pw0 <- pw("full")
+r0 <- as.numeric(le(size$p_full, 0.05))
+n <- nrow(size)
+rows <- lapply(names(tests), function(t) {
+  x <- as.numeric(le(size[[paste0("p_", t)]], 0.05))
+  k <- sum(x)
+  w <- wilson(k, n)
+  d <- x - r0
+  se <- sd(d) / sqrt(n)
+  dpw <- if (t == "full") NA else pw(t)$r - pw0$r
+  data.frame(`Missing wells` = tests[[t]],
+             `Rate at 0.05` = w$rate, lo = w$lo, hi = w$hi,
+             `Rate at 0.01` = mean(le(size[[paste0("p_", t)]], 0.01)),
+             `Paired diff.` = if (t == "full") NA else mean(d),
+             `diff lo` = if (t == "full") NA else mean(d) - 1.959964 * se,
+             `diff hi` = if (t == "full") NA else mean(d) + 1.959964 * se,
+             `Mean power change` = if (t == "full") NA else mean(dpw),
+             `Worst power change` = if (t == "full") NA else min(dpw),
+             check.names = FALSE)
+})
+S6 <- bind_rows(rows)
+kb(S6, row.names = FALSE)
+S6_file <- read_result(file.path(SIM, "tabS6_missing.csv"))
+cat("Largest absolute difference to tabS6_missing.csv (rate, 0.01 rate, paired difference, power change):",
+    format(max(abs(S6$`Rate at 0.05` - S6_file$rate05),
+               abs(S6$`Rate at 0.01` - S6_file$rate01),
+               abs(S6$`Paired diff.` - S6_file$diff), abs(S6$`Mean power change` - S6_file$power_change), na.rm = TRUE), digits = 2), "\n")
+```
+
+```{r tabS6-checks}
+r05 <- setNames(S6$`Rate at 0.05`, names(tests))
+check("Size, complete grid (36,000 datasets)", 0.0378, r05[["full"]], 5e-5)
+check("Size, 1 missing combination well", 0.0376, r05[["int1"]], 5e-5)
+check("Size, 2 missing combination wells", 0.0380, r05[["int2"]], 5e-5)
+check("Size, 3 missing combination wells", 0.0391, r05[["int3"]], 5e-5)
+check("Size, single-agent dose row dropped", 0.0384, r05[["rowdrop"]], 5e-5)
+pc <- setNames(S6$`Mean power change`, names(tests))
+pdiff <- setNames(S6[["Paired diff."]], names(tests))
+pdlo <- setNames(S6[["diff lo"]], names(tests))
+pdhi <- setNames(S6[["diff hi"]], names(tests))
+r01 <- setNames(S6[["Rate at 0.01"]], names(tests))
+check("Mean power loss, 1 missing well", 0.010, -pc[["int1"]], 5e-4)
+check("Mean power loss, 2 missing wells", 0.019, -pc[["int2"]], 5e-4)
+check("Mean power loss, 3 missing wells", 0.033, -pc[["int3"]], 5e-4)
+```
+
+The confirmation runs used for the single-agent row drop in the main text are two additional sets of 20,000 datasets for the two settings with the highest rate (4x4 grid, the moderate and the weak single-agent surface).
+
+```{r rowdrop-confirm}
+cf <- bind_rows(lapply(c("4Bmoderate", "4Bweak"), function(s) {
+  d <- read_parquet(file.path(SIM, paste0("fig6_missing_confirm_", s, ".parquet")))
+  bind_rows(lapply(names(tests), function(t) {
+    k <- sum(le(d[[paste0("p_", t)]], 0.05))
+    cbind(data.frame(setting = s, test = tests[[t]], n = nrow(d)), wilson(k, nrow(d)))
+  }))
+}))
+kb(cf, row.names = FALSE)
+check("Worst single-agent-row-drop rate on 20,000 datasets", 0.0456,
+      max(cf$rate[cf$test == tests[["rowdrop"]]]), 6e-5)
+```
+
+With an exact single-agent reference (design P) the same removals can also be studied; the supplement reports the range for 1 to 3 missing wells.
+
+```{r designP}
+sp <- read_result(file.path(SIM, "fig6_text_numbers.json"))$missing$designP
+dp <- data.frame(test = names(sp), rate = sapply(sp, function(z) z$r05$rate), n = sapply(sp, function(z) z$r05$n))
+kb(dp, row.names = FALSE)
+check("Design P size, complete grid", 0.0492, dp$rate[dp$test == "full"], 5e-5)
+check("Design P size, 1 to 3 missing wells (minimum)", 0.0496, min(dp$rate[dp$test %in% c("int1", "int2", "int3")]), 5e-5)
+check("Design P size, 1 to 3 missing wells (maximum)", 0.0504, max(dp$rate[dp$test %in% c("int1", "int2", "int3")]), 5e-5)
+```
+
+## What do we see?
+
+With one, two and three combination wells missing, $T_{\mathrm{SIR}}$ rejected `r f4(r05[["int1"]])`, `r f4(r05[["int2"]])` and `r f4(r05[["int3"]])` of the 36,000 exact-Bliss datasets, against `r f4(r05[["full"]])` for the complete grid on the same datasets; dropping the dose row of a missing single-agent well gave `r f4(r05[["rowdrop"]])`. The paired differences to the complete grid are `r sprintf("%+.4f", pdiff[["int1"]])`, `r sprintf("%+.4f", pdiff[["int2"]])`, `r sprintf("%+.4f", pdiff[["int3"]])` and `r sprintf("%+.4f", pdiff[["rowdrop"]])`, and each 95% interval contains zero (for three missing wells it runs from `r sprintf("%+.4f", pdlo[["int3"]])` to `r sprintf("%+.4f", pdhi[["int3"]])`). At level 0.01 the rates are `r f4(r01[["int1"]])` to `r f4(r01[["int3"]])` for missing wells and `r f4(r01[["rowdrop"]])` for the dropped row, against `r f4(r01[["full"]])` for the complete grid.
+
+The complete-grid rate in design S sits below 0.05 in this study, so the comparison that matters is with the complete grid on the same datasets, not with 0.05. With an exact single-agent reference (design P) the rates are close to nominal, `r f4(min(dp$rate[dp$test %in% c("int1", "int2", "int3")]))` to `r f4(max(dp$rate[dp$test %in% c("int1", "int2", "int3")]))` against `r f4(dp$rate[dp$test == "full"])` for the complete grid. The two confirmation runs of 20,000 datasets, placed on the settings with the highest rates, give at most `r f4(max(cf$rate[cf$test == tests[["rowdrop"]]]))` for the dropped row, against `r f4(max(cf$rate[cf$test == "None"]))` for the complete grid in the same runs. Within each grid the five treatments span a narrow range, `r f4(min(A$rate[A$grid == "5x5"]))` to `r f4(max(A$rate[A$grid == "5x5"]))` for the 5x5 grid and `r f4(min(A$rate[A$grid == "4x4"]))` to `r f4(max(A$rate[A$grid == "4x4"]))` for the 4x4 grid (Panel A).
+
+The table also shows the cost of the other direction: the statistic is a sum over observed cells, and the reference plates carry the same missing pattern, so nothing in the p-value assumes a cell that was not measured.
+
+## Held-out wells: how well does the restricted fit bound a missing cell?
+
+The test does not impute missing wells, but the restricted fit bounds a missing cell between the fitted values of its observed neighbors. To see how tight the bounds are on real data, stage 02 held out each of the 16 combination wells of every O'Neil replicate-mean matrix in turn and predicted it by the midpoint of the bounds, against the Bliss prediction built from the isotonic single-agent fits.
+
+```{r holdout}
+mw <- read_result(file.path(REAL, "missing_well_summary.json"))
+hold <- data.frame(
+  quantity = c("O'Neil replicate-mean matrices", "Held-out wells",
+               "Median per-matrix RMSE, isotonic bounds midpoint",
+               "Median per-matrix RMSE, Bliss prediction",
+               "Share of matrices where isotonic is better",
+               "Median paired difference (isotonic minus Bliss)"),
+  value = c(mw$sets, mw$wells_held_out, mw$median_rmse_iso, mw$median_rmse_bliss,
+            mw$share_sets_iso_better_than_bliss, mw$median_paired_difference_iso_minus_bliss),
+  iqr = c("", "", sprintf("%.4f to %.4f", mw$iqr_rmse_iso[1], mw$iqr_rmse_iso[2]),
+          sprintf("%.4f to %.4f", mw$iqr_rmse_bliss[1], mw$iqr_rmse_bliss[2]), "", ""))
+kb(hold, digits = 4, row.names = FALSE, format.args = list(big.mark = ","))
+check("Held-out well RMSE, isotonic", 0.064, mw$median_rmse_iso, 5e-4)
+check("Held-out well RMSE, Bliss prediction", 0.084, mw$median_rmse_bliss, 5e-4)
+check("Share of matrices where isotonic prediction is better", 0.726, mw$share_sets_iso_better_than_bliss, 5e-4)
+check("Held-out wells", 368832, mw$wells_held_out, 0.5)
+```
+
+On real O'Neil matrices, the midpoint of the isotonic bounds predicted a held-out well with a median per-matrix RMSE of `r f4(mw$median_rmse_iso)` (interquartile range `r f4(mw$iqr_rmse_iso[1])` to `r f4(mw$iqr_rmse_iso[2])`), against `r f4(mw$median_rmse_bliss)` (`r f4(mw$iqr_rmse_bliss[1])` to `r f4(mw$iqr_rmse_bliss[2])`) for the Bliss prediction from the isotonic single-agent fits. The isotonic prediction was better in `r pct1(mw$share_sets_iso_better_than_bliss)` of the `r format(mw$sets, big.mark = ",")` matrices, with a median paired difference of `r f3(mw$median_paired_difference_iso_minus_bliss)`. A missing cell is therefore pinned down to within a viability error of about 0.06 by its observed neighbors alone. The test uses this only as a constraint; it never fills the cell.
+
+## Decision point
+
+**Decision point.** Missing combination wells and a dropped single-agent row leave the size where it was, so no correction is needed. What remains is the price in power (Panel B), and then the one imperfection that can raise the size, gross errors in single readings (Panels C and D).
+
+# Panel B: what missing wells cost in power
+
+## Rationale
+
+Dropping information must cost something. Panel B shows the power at 0.05 for four synergy patterns on the 5x5 grid under additive noise with the O'Neil SD curve, with no missing well, one, three, and a dropped single-agent dose row.
+
+```{r panelB}
+Bd <- power[power$I == 5 & power$law == "C", ]
+conds <- c(syn_broad_0.20 = "Broad 0.20", syn_hdblock_1.20 = "High-dose block 1.20",
+           syn_corner_2.00 = "Top corner 2.00", sat_0.30 = "Saturating 0.30")
+keys <- c(full = "No missing well", int1 = "1 combination well missing",
+          int3 = "3 combination wells missing", rowdrop = "Single-agent dose row dropped")
+Bt <- bind_rows(lapply(names(conds), function(cd) {
+  z <- Bd[Bd$cond == cd, ]
+  bind_rows(lapply(names(keys), function(k)
+    data.frame(pattern = conds[[cd]], treatment = keys[[k]], n = nrow(z),
+               power = mean(le(z[[paste0("p_", k)]], 0.05)))))
+}))
+Bw <- pivot_wider(Bt[, c("pattern", "treatment", "power")], names_from = treatment, values_from = power)
+kb(Bw, digits = 3, row.names = FALSE)
+cat("Matrices per bar:", unique(Bt$n), "\n")
+bp <- function(pat, key) Bt$power[Bt$pattern == pat & Bt$treatment == keys[[key]]]
+bjson <- read_result(file.path(SIM, "fig6_numbers.json"))$B
+cat("Largest absolute difference to fig6_numbers.json:",
+    format(max(abs(sapply(names(conds), function(cd) sapply(names(keys), function(k) bjson[[cd]][[k]])) -
+                   sapply(names(conds), function(cd) sapply(names(keys), function(k) Bt$power[Bt$pattern == conds[[cd]] & Bt$treatment == keys[[k]]])))), digits = 2), "\n")
+```
+
+```{r panelB-plot, fig.height=3.8}
+Bt$treatment <- factor(Bt$treatment, levels = keys)
+Bt$pattern <- factor(Bt$pattern, levels = conds)
+pB <- ggplot(Bt, aes(pattern, power, fill = treatment)) +
+  geom_col(position = position_dodge(width = 0.85), width = 0.8) +
+  scale_fill_manual(values = c("#0072B2", "#56A0D3", "#A9CCE8", "gray35")) +
+  scale_x_discrete(labels = label_wrap(10)) +
+  guides(fill = guide_legend(nrow = 2)) +
+  labs(x = NULL, y = expression("Power ("*alpha==0.05*")"), fill = NULL)
+pB
+```
+
+The power-loss summary over all 72 settings is in Table S6. The largest single-setting losses occur when the missing wells are the synergistic cells themselves.
+
+```{r power-loss}
+pl <- read_result(file.path(SIM, "fig6_text_numbers.json"))$missing
+loss <- data.frame(test = c("int1", "int2", "int3"),
+                   mean = sapply(c("int1", "int2", "int3"), function(k) pl$power_change[[k]]$mean),
+                   min = sapply(c("int1", "int2", "int3"), function(k) pl$power_change[[k]]$min),
+                   worst_setting = sapply(c("int1", "int2", "int3"), function(k) pl$power_change[[k]]$worst))
+kb(loss, row.names = FALSE)
+cn <- power[startsWith(power$cond, "syn_corner"), ]
+cat("Corner-pattern datasets in which the synergistic cell is itself missing, with 1, 2, 3 missing wells:",
+    paste(sprintf("%.3f", sapply(1:3, function(q) mean(cn[[paste0("nsyn_miss", q)]] > 0))), collapse = ", "), "\n")
+obs <- cn[cn$nsyn_miss3 == 0, ]
+cat(sprintf("Power in corner-pattern datasets where that cell stays observed: %.3f complete, %.3f with 3 missing wells (%s datasets)\n",
+            mean(le(obs$p_full, 0.05)), mean(le(obs$p_int3, 0.05)), format(nrow(obs), big.mark = ",")))
+```
+
+```{r check-B}
+check("Largest single-setting power loss, 3 missing wells (4x4, one synergistic corner cell)", 0.31,
+      -loss$min[loss$test == "int3"], 5e-3)
+```
+
+## What do we see?
+
+Power falls as information is removed for broad, high-dose block and saturating synergy. Broad synergy (0.20) goes from `r f3(bp("Broad 0.20", "full"))` with a complete grid to `r f3(bp("Broad 0.20", "int1"))` with one missing well, `r f3(bp("Broad 0.20", "int3"))` with three, and `r f3(bp("Broad 0.20", "rowdrop"))` with a dropped single-agent row; the high-dose block goes from `r f3(bp("High-dose block 1.20", "full"))` to `r f3(bp("High-dose block 1.20", "int1"))`, `r f3(bp("High-dose block 1.20", "int3"))` and `r f3(bp("High-dose block 1.20", "rowdrop"))`; saturating synergy from `r f3(bp("Saturating 0.30", "full"))` to `r f3(bp("Saturating 0.30", "int1"))`, `r f3(bp("Saturating 0.30", "int3"))` and `r f3(bp("Saturating 0.30", "rowdrop"))`. The dropped row costs the most for these three patterns, since it removes a whole row or column of cells together with the Bliss prediction built from it.
+
+The top-corner pattern, whose whole signal sits in one cell, does not follow this ordering in this panel: `r f3(bp("Top corner 2.00", "full"))` complete, `r f3(bp("Top corner 2.00", "int1"))` with one missing well, `r f3(bp("Top corner 2.00", "int3"))` with three. The loss for this pattern is confined to the datasets in which the synergistic cell itself is missing. Pooled over the corner settings that happens in `r pct1(mean(cn$nsyn_miss1 > 0))`, `r pct1(mean(cn$nsyn_miss2 > 0))` and `r pct1(mean(cn$nsyn_miss3 > 0))` of the datasets with one, two and three missing wells, and the largest single-setting losses (`r f3(-loss$min[1])`, `r f3(-loss$min[2])` and `r f3(-loss$min[3])`) all occur in one setting (4x4 grid, noise law B, weak single-agent surface, corner effect 2.00). Averaged over the 72 settings the loss is `r f3(-pc[["int1"]])`, `r f3(-pc[["int2"]])` and `r f3(-pc[["int3"]])` for one, two and three missing wells and `r f3(-pc[["rowdrop"]])` for the dropped row.
+
+## Decision point
+
+**Decision point.** Missing wells affect power and leave validity intact, with an average cost below 0.05 even for the most expensive treatment. Next we ask what happens when a well is present but wrong.
+
+# Panels C and D: gross single-replicate errors and the replicate screen
+
+## Rationale
+
+A gross error in one reading looks like noise of the wrong size. In a single-agent well it shifts the Bliss prediction of an entire row, so it can produce false synergy across many cells. We add gross errors at a per-well rate of 0, 0.4% (the rate observed in the O'Neil screen), 1% and 2%, with magnitudes resampled from the observed O'Neil gross errors, and measure the rejection rate at exact Bliss with and without the screen. Because the screen is not covered by the least-favorable-null argument, this simulation is the evidence for its level.
+
+## Size with and without the screen
+
+```{r panelC-pooled}
+ss <- D$screen_size
+ss$level <- as.numeric(ss$level)
+C_all <- ss %>% group_by(arm, level) %>%
+  summarise(k = sum(le(p, 0.05)), n = n(), .groups = "drop") %>%
+  bind_cols(wilson(.$k, .$n))
+Cw <- C_all %>% select(arm, level, rate, lo, hi, n) %>% arrange(level, arm)
+kb(Cw, row.names = FALSE, format.args = list(big.mark = ","))
+tn <- read_result(file.path(SIM, "fig6_text_numbers.json"))$screen
+rate_of <- function(arm, lev) C_all$rate[C_all$arm == arm & C_all$level == lev]
+check("Size, no screen, 0.4% gross errors", 0.0545, rate_of("noscreen", 0.004), 5e-5)
+check("Size, no screen, 2% gross errors", 0.1000, rate_of("noscreen", 0.02), 5e-5)
+check("Size, screen, 0.4% gross errors", 0.0438, rate_of("screen", 0.004), 5e-5)
+check("Size, screen, 2% gross errors", 0.0466, rate_of("screen", 0.02), 5e-5)
+check("Size, no screen, 1% gross errors (supplement)", 0.0723, rate_of("noscreen", 0.01), 5e-5)
+check("Size, screen, 1% gross errors (supplement)", 0.0449, rate_of("screen", 0.01), 5e-5)
+check("Size, clean data, no screen (supplement)", 0.0429, rate_of("noscreen", 0), 5e-5)
+check("Size, clean data, screen (supplement)", 0.0429, rate_of("screen", 0), 5e-5)
+```
+
+On clean data the screen costs nothing: the two arms reject `r sum(le(ss$p[ss$arm=="screen" & ss$level==0], 0.05))` and `r sum(le(ss$p[ss$arm=="noscreen" & ss$level==0], 0.05))` of the same 36,000 datasets. The pooled rates above agree with `fig6_text_numbers.json` (largest difference `r format(max(abs(c(rate_of("noscreen", 0.004) - tn$noscreen_0.004$r05$rate, rate_of("screen", 0.02) - tn$screen_0.02$r05$rate))), digits = 2)`).
+
+```{r where-do-errors-act}
+no <- ss[ss$arm == "noscreen" & ss$level == 0.02, ]
+grp <- ifelse(no$n_cont_edge > 0, "an error in a single-agent well",
+              ifelse(no$n_cont > 0, "errors in combination wells only", "no error"))
+W <- data.frame(group = grp, rej = le(no$p, 0.05)) %>% group_by(group) %>%
+  summarise(datasets = n(), rejection_rate = mean(rej), .groups = "drop")
+W$share_of_datasets <- W$datasets / sum(W$datasets)
+kb(W, row.names = FALSE, format.args = list(big.mark = ","))
+check("Rejection among datasets with an error in a single-agent well, no screen, 2%", 0.475,
+      W$rejection_rate[W$group == "an error in a single-agent well"], 5e-4)
+```
+
+## Panel C
+
+Panel C plots the 5x5 synthetic four-replicate matrices under the O'Neil SD law and under additive noise (6,000 matrices per point), and a bank of real O'Neil residuals (22,422 matrices per point).
+
+```{r panelC}
+sc <- ss[ss$I == 5 & ss$law %in% c("C", "A"), ]
+Cs <- sc %>% group_by(law, arm, level) %>% summarise(k = sum(le(p, 0.05)), n = n(), .groups = "drop")
+Cs <- bind_cols(Cs, wilson(Cs$k, Cs$n))
+Cs$source <- ifelse(Cs$law == "C", "Synthetic, O'Neil SD law", "Synthetic, additive")
+bank <- D$bank
+Cb <- bank %>% group_by(arm, level) %>% summarise(k = sum(le(p, 0.05)), n = n(), .groups = "drop")
+Cb <- bind_cols(Cb, wilson(Cb$k, Cb$n))
+Cb$level_num <- c(natural = 0, add0.01 = 1, add0.02 = 2)[Cb$level]
+Cb$source <- "O'Neil residual bank"
+Cb$level_pct <- Cb$level_num
+Cs$level_pct <- Cs$level * 100
+Call <- bind_rows(Cs %>% select(source, arm, level_pct, rate, lo, hi, n),
+                  Cb %>% select(source, arm, level_pct, rate, lo, hi, n))
+kb(Call %>% arrange(source, arm, level_pct), row.names = FALSE, format.args = list(big.mark = ","))
+```
+
+```{r panelC-plot, fig.height=4}
+Call$arm <- factor(Call$arm, levels = c("noscreen", "screen"), labels = c("No screen", "Replicate screen"))
+pC <- ggplot(Call, aes(level_pct, rate, color = source, linetype = arm, shape = source)) +
+  geom_hline(yintercept = 0.05, linetype = 3, color = "gray50") +
+  geom_line(linewidth = 0.6, position = position_dodge(width = 0.08)) +
+  geom_pointrange(aes(ymin = lo, ymax = hi), size = 0.35, position = position_dodge(width = 0.08)) +
+  scale_y_log10(breaks = c(0.03, 0.05, 0.1, 0.2)) +
+  scale_color_manual(values = c("Synthetic, O'Neil SD law" = pal[["blue"]], "Synthetic, additive" = pal[["light"]], "O'Neil residual bank" = "gray20")) +
+  scale_linetype_manual(values = c("No screen" = "dashed", "Replicate screen" = "solid")) +
+  labs(x = "Added gross-error rate per well (%)", y = expression("Rejection rate ("*alpha==0.05*")"),
+       color = NULL, linetype = NULL, shape = NULL) +
+  guides(color = guide_legend(nrow = 2), linetype = guide_legend(nrow = 2), shape = "none")
+pC
+```
+
+The bank arm is the natural errors in the real O'Neil residuals (the first x position, "natural"), plus added errors at 1% and 2%; added errors fall on combination wells only there because the reported single-agent curves are fixed. The synthetic panels show the larger effect, since their errors also hit single-agent wells.
+
+```{r panelC-check}
+cj <- read_result(file.path(SIM, "fig6_numbers.json"))
+cat("Panel C synthetic points agree with fig6_numbers.json (largest absolute difference):",
+    format(max(abs(c(
+      Cs$rate[Cs$law == "C" & Cs$arm == "noscreen" & Cs$level == 0.02] - cj$C_synth$C_noscreen[["0.02"]],
+      Cs$rate[Cs$law == "C" & Cs$arm == "screen" & Cs$level == 0.02] - cj$C_synth$C_screen[["0.02"]],
+      Cs$rate[Cs$law == "A" & Cs$arm == "noscreen" & Cs$level == 0.01] - cj$C_synth$A_noscreen[["0.01"]]))), digits = 2), "\n")
+```
+
+## Panel D: the screen does not remove synergy
+
+```{r panelD}
+sp <- D$screen_power
+sp$level <- as.numeric(sp$level)
+Dd <- sp[sp$I == 5 & sp$law == "C", ]
+dconds <- c(syn_broad_0.10 = "Broad 0.10", syn_hdblock_0.40 = "High-dose block 0.40",
+            syn_corner_1.00 = "Top corner 1.00", sat_0.15 = "Saturating 0.15")
+Dt <- Dd[Dd$cond %in% names(dconds), ] %>%
+  group_by(cond, level, arm) %>% summarise(power = mean(le(p, 0.05)), n = n(), .groups = "drop")
+Dt$pattern <- dconds[Dt$cond]
+Dt$series <- paste0(ifelse(Dt$level == 0, "Clean", "2% errors"), ", ", ifelse(Dt$arm == "screen", "screen", "no screen"))
+Dw <- pivot_wider(Dt[, c("pattern", "series", "power")], names_from = series, values_from = power)
+kb(Dw[, c("pattern", "Clean, no screen", "Clean, screen", "2% errors, no screen", "2% errors, screen")], digits = 3, row.names = FALSE)
+cat("Matrices per bar:", unique(Dt$n), "\n")
+```
+
+```{r panelD-plot, fig.height=3.8}
+Dt$pattern <- factor(Dt$pattern, levels = dconds)
+Dt$series <- factor(Dt$series, levels = c("Clean, no screen", "Clean, screen", "2% errors, no screen", "2% errors, screen"))
+pD <- ggplot(Dt, aes(pattern, power, fill = series)) +
+  geom_col(position = position_dodge(width = 0.85), width = 0.8) +
+  scale_fill_manual(values = c("#A9CCE8", "#0072B2", "#EBB0A6", "#B2182B")) +
+  scale_x_discrete(labels = label_wrap(10)) +
+  guides(fill = guide_legend(nrow = 2)) +
+  labs(x = NULL, y = expression("Power ("*alpha==0.05*")"), fill = NULL)
+pD
+```
+
+```{r panelD-clean-change}
+cp <- read_result(file.path(SIM, "fig6_text_numbers.json"))$screen$clean_power_change
+cat(sprintf("Mean change in power from adding the screen to clean data, over %d settings: %.4f (range %.4f to %.4f)\n",
+            cp$rows, cp$mean, cp$min, cp$max))
+check("Size change from the screen on clean data (supplement)", -0.00003, tn$clean_paired_screen_minus_noscreen$diff, 5e-6)
+check("Mean power change from the screen on clean data (supplement)", -0.0015, cp$mean, 5e-5)
+```
+
+## What do we see?
+
+Without the screen, gross errors inflate the size steadily with their rate: pooled over the 36,000 exact-Bliss datasets per row, the rejection rate is `r f4(rate_of("noscreen", 0))` on clean data, `r f4(rate_of("noscreen", 0.004))` at 0.4% of wells (the O'Neil rate), `r f4(rate_of("noscreen", 0.01))` at 1% and `r f4(rate_of("noscreen", 0.02))` at 2%. With the screen the corresponding rates are `r f4(rate_of("screen", 0))`, `r f4(rate_of("screen", 0.004))`, `r f4(rate_of("screen", 0.01))` and `r f4(rate_of("screen", 0.02))`, close to the clean-data rate in every row. The excess comes from single-agent wells: at 2%, the `r pct1(W$share_of_datasets[W$group == "an error in a single-agent well"])` of datasets with an error in some single-agent well were rejected at `r f4(W$rejection_rate[W$group == "an error in a single-agent well"])`, while datasets with errors in combination wells only (`r f4(W$rejection_rate[W$group == "errors in combination wells only"])`) and datasets without errors (`r f4(W$rejection_rate[W$group == "no error"])`) stayed at the clean-data rate.
+
+Panel C shows the same ordering on the 5x5 synthetic four-replicate matrices: at 2% errors the O'Neil SD law moves from `r f4(Cs$rate[Cs$law == "C" & Cs$arm == "noscreen" & Cs$level == 0])` to `r f4(Cs$rate[Cs$law == "C" & Cs$arm == "noscreen" & Cs$level == 0.02])` without the screen and stays at `r f4(Cs$rate[Cs$law == "C" & Cs$arm == "screen" & Cs$level == 0.02])` with it; additive noise moves from `r f4(Cs$rate[Cs$law == "A" & Cs$arm == "noscreen" & Cs$level == 0])` to `r f4(Cs$rate[Cs$law == "A" & Cs$arm == "noscreen" & Cs$level == 0.02])` and stays at `r f4(Cs$rate[Cs$law == "A" & Cs$arm == "screen" & Cs$level == 0.02])`. On the bank of real O'Neil residuals, the production configuration, the rate is `r f4(Cb$rate[Cb$arm == "noscreen" & Cb$level == "natural"])` without and `r f4(Cb$rate[Cb$arm == "screen" & Cb$level == "natural"])` with the screen on the natural errors, and `r f4(Cb$rate[Cb$arm == "noscreen" & Cb$level == "add0.02"])` and `r f4(Cb$rate[Cb$arm == "screen" & Cb$level == "add0.02"])` after adding 2% more errors on combination wells. Both stay below 0.05 because the reported single-agent curves are fixed in that design, so added errors cannot reach the single-agent wells that drive the inflation.
+
+On clean data the screen costs nothing: it changes the rejection count by one dataset in 36,000 (`r sum(le(ss$p[ss$arm == "screen" & ss$level == 0], 0.05))` against `r sum(le(ss$p[ss$arm == "noscreen" & ss$level == 0], 0.05))`), and the mean change in power over `r cp$rows` settings is `r f4(cp$mean)` (range `r f4(cp$min)` to `r f4(cp$max)`). Panel D shows power that the screen leaves in place: with 2% errors the screened bars are `r f3(Dw[["2% errors, screen"]][Dw$pattern == "Broad 0.10"])`, `r f3(Dw[["2% errors, screen"]][Dw$pattern == "High-dose block 0.40"])`, `r f3(Dw[["2% errors, screen"]][Dw$pattern == "Top corner 1.00"])` and `r f3(Dw[["2% errors, screen"]][Dw$pattern == "Saturating 0.15"])` for the four patterns, against `r f3(Dw[["Clean, screen"]][Dw$pattern == "Broad 0.10"])`, `r f3(Dw[["Clean, screen"]][Dw$pattern == "High-dose block 0.40"])`, `r f3(Dw[["Clean, screen"]][Dw$pattern == "Top corner 1.00"])` and `r f3(Dw[["Clean, screen"]][Dw$pattern == "Saturating 0.15"])` on clean data. Without the screen, 2% errors raise the apparent power of the broad pattern to `r f3(Dw[["2% errors, no screen"]][Dw$pattern == "Broad 0.10"])` from `r f3(Dw[["Clean, no screen"]][Dw$pattern == "Broad 0.10"])`, a rise that comes from false positives and not from detection.
+
+The screen is a data-dependent rule and is not covered by the least-favorable-null argument, so this size table is the evidence for its level: after applying it the largest pooled rate is `r f4(max(C_all$rate[C_all$arm == "screen"]))`, and that is under 0.05 at every error rate that we simulated.
+
+## Decision point
+
+**Decision point.** The screen needs at least three values per well, and it was evaluated with four replicates. A single plate offers no replicate to compare with, so Panel E asks a different question: how much does a call depend on one measurement?
+
+# Panel E: fragility flags for single plates
+
+## Rationale
+
+On one plate a gross error and real synergy cannot be told apart, so the screen does not apply. The fragility checks instead report how much a call depends on single measurements. For a flag to be informative it should fire often on calls that rest on one cell or one single-agent row (false calls from an error, or a single synergistic cell) and rarely on calls supported by broad synergy.
+
+## Rebuilding the shares
+
+```{r panelE}
+fr <- D$fragility
+fr$level <- as.numeric(fr$level)
+frag_rows <- data.frame(
+  cond = c("null", "null", "null", "null", "syn_corner_2.00", "dip_1.00", "syn_hdblock_0.80", "syn_broad_0.20", "syn_broad_0.30", "sat_0.60"),
+  level = c(0, 0.004, 0.01, 0.02, 0, 0, 0, 0, 0, 0),
+  surface = c(rep("moderate", 4), "weak", "moderate", "moderate", "moderate", "moderate", "strong"),
+  name = c("Exact Bliss, clean", "Exact Bliss, 0.4% errors", "Exact Bliss, 1% errors", "Exact Bliss, 2% errors",
+           "Top corner cell 2.0", "Middle cell 1.0", "High-dose block 0.8", "Broad 0.2", "Broad 0.3", "Saturating 0.6"))
+E <- bind_rows(lapply(seq_len(nrow(frag_rows)), function(i) {
+  r <- frag_rows[i, ]
+  y <- fr[fr$I == 5 & fr$law == "C" & fr$cond == r$cond & fr$level == r$level & fr$surface == r$surface, ]
+  call <- le(y$p, 0.05)
+  data.frame(setting = r$name, matrices = nrow(y), calls = sum(call),
+             cell_flag = sum(call & y$loco_flag) / sum(call),
+             row_flag = sum(call & y$sa_flag) / sum(call))
+}))
+kb(E, digits = 3, row.names = FALSE)
+ej <- read_result(file.path(SIM, "fig6_numbers.json"))$E
+cat("Largest absolute difference to fig6_numbers.json (calls, cell share, row share):",
+    format(max(abs(E$calls - sapply(E$setting, function(s) ej[[s]]$calls)),
+               abs(E$cell_flag - sapply(E$setting, function(s) ej[[s]]$cell)),
+               abs(E$row_flag - sapply(E$setting, function(s) ej[[s]]$row))), digits = 2), "\n")
+```
+
+```{r panelE-plot, fig.height=4.2}
+Ep <- pivot_longer(E, c(cell_flag, row_flag), names_to = "check", values_to = "share")
+Ep$check <- recode(Ep$check, cell_flag = "Combination cell set to missing", row_flag = "Single-agent dose row dropped")
+Ep$k <- round(Ep$share * Ep$calls)
+Ep <- bind_cols(Ep, wilson(Ep$k, Ep$calls)[, c("lo", "hi")])
+Ep$setting <- factor(paste0(Ep$setting, " (", Ep$calls, ")"), levels = rev(paste0(E$setting, " (", E$calls, ")")))
+pE <- ggplot(Ep, aes(share, setting, color = check, shape = check)) +
+  geom_pointrange(aes(xmin = lo, xmax = hi), position = position_dodge(width = 0.5), size = 0.35) +
+  scale_color_manual(values = c("Combination cell set to missing" = pal[["blue"]], "Single-agent dose row dropped" = "gray30")) +
+  coord_cartesian(xlim = c(0, 1)) +
+  labs(x = expression("Share of calls no longer at "*p<=0.05), y = NULL, color = NULL, shape = NULL)
+pE
+```
+
+## Pooled shares across settings
+
+```{r panelE-pooled}
+ft <- read_result(file.path(SIM, "fig6_text_numbers.json"))$fragility
+pooled <- data.frame(
+  quantity = c("Calls driven by one synergistic cell: cell check fired", "Calls driven by one synergistic cell: row check fired",
+               "Broad-synergy calls: cell check fired", "Broad-synergy calls: row check fired",
+               "False calls caused by a single-agent error: row check identified the contaminated well"),
+  value = c(ft$pooled_single_cell$cell, ft$pooled_single_cell$row, ft$pooled_broad$cell, ft$pooled_broad$row,
+            ft$contaminated_false_calls$dropped_is_contaminated))
+kb(pooled, digits = 3, row.names = FALSE)
+```
+
+```{r check-E}
+cE <- function(s, f) E[[f]][E$setting == s]
+check("Cell check, clean exact Bliss calls (supplement)", 0.764, cE("Exact Bliss, clean", "cell_flag"), 5e-4)
+check("Cell check, single synergistic corner cell (supplement)", 0.867, cE("Top corner cell 2.0", "cell_flag"), 5e-4)
+check("Cell check, broad synergy 0.2 (supplement)", 0.372, cE("Broad 0.2", "cell_flag"), 5e-4)
+check("Cell check, saturating synergy 0.6 (supplement)", 0.012, cE("Saturating 0.6", "cell_flag"), 5e-4)
+check("Row check, clean exact Bliss calls (supplement)", 0.931, cE("Exact Bliss, clean", "row_flag"), 5e-4)
+check("Row check, single synergistic corner cell (supplement)", 0.928, cE("Top corner cell 2.0", "row_flag"), 5e-4)
+check("Row check, broad synergy 0.2 (supplement)", 0.736, cE("Broad 0.2", "row_flag"), 5e-4)
+check("Row check, saturating synergy 0.6 (supplement)", 0.064, cE("Saturating 0.6", "row_flag"), 5e-4)
+check("Cell check fired on calls driven by one synergistic cell, pooled (supplement)", 0.91, ft$pooled_single_cell$cell, 5e-3)
+check("Cell check fired on broad-synergy calls, pooled (supplement)", 0.29, ft$pooled_broad$cell, 5e-3)
+check("Row check identified the contaminated well in false calls from a single-agent error (supplement)", 0.98, ft$contaminated_false_calls$dropped_is_contaminated, 5e-3)
+```
+
+## What do we see?
+
+At exact Bliss without errors, `r E$calls[1]` of `r E$matrices[1]` matrices were called at 0.05 (`r pct1(E$calls[1] / E$matrices[1])`), and the flags removed most of them: the cell check `r f3(E$cell_flag[1])` and the dose-row check `r f3(E$row_flag[1])`. Adding errors increased the number of false calls to `r E$calls[2]`, `r E$calls[3]` and `r E$calls[4]` at 0.4%, 1% and 2%; the row check still removed `r f3(E$row_flag[2])`, `r f3(E$row_flag[3])` and `r f3(E$row_flag[4])` of them, and it identified the contaminated single-agent well in `r f3(ft$contaminated_false_calls$dropped_is_contaminated)` of the false calls caused by a single-agent error. The cell check fell to `r f3(E$cell_flag[2])`, `r f3(E$cell_flag[3])` and `r f3(E$cell_flag[4])` because errors in single-agent wells inflate many cells at once.
+
+For true synergy, the flags track how concentrated the evidence is. When the call rests on one cell the cell check removes `r f3(E$cell_flag[5])` (top corner) and `r f3(E$cell_flag[6])` (middle cell) of the calls. As the synergy spreads, the share falls: `r f3(E$cell_flag[7])` for a high-dose block, `r f3(E$cell_flag[8])` and `r f3(E$cell_flag[9])` for broad synergy of amplitude 0.2 and 0.3, and `r f3(E$cell_flag[10])` for saturating synergy, where `r E$calls[10]` of the 1,000 matrices were called. The dose-row check removes `r f3(E$row_flag[8])` of the calls under broad 0.2 synergy and `r f3(E$row_flag[10])` under saturating synergy. Pooled over settings, the cell check fired on `r f3(ft$pooled_single_cell$cell)` of calls driven by one synergistic cell and on `r f3(ft$pooled_broad$cell)` of broad-synergy calls.
+
+The flag shares for a single true synergistic cell (`r f3(E$cell_flag[5])`, `r f3(E$row_flag[5])`) are as high as those for false calls at clean exact Bliss (`r f3(E$cell_flag[1])`, `r f3(E$row_flag[1])`). A flag therefore reports that a call depends on one cell or one single-agent row. It does not say that the measurement is wrong, and for that reason the checks describe fragility and are not an outlier test.
+
+## Decision point
+
+**Decision point.** Missing wells and gross errors are addressed. The last question is about the model itself: what if the dose responses are not exactly monotone?
+
+# Panel F: weak departures from monotonicity
+
+## Rationale
+
+The null is Bliss independence of the true single-agent curves. If those curves are hormetic (above 1 at low doses) or have small reversals, the monotone fits smooth them. We test whether this raises the false-positive rate at exact Bliss for the true curves. Each row is a truth: hormesis raises the lowest dose of both drugs to the stated viability; the inactive drug stays at 1.07 at every dose; a rebound or reversal raises one dose above the next lower dose by the stated amount; "raised cell" and "raised row" are antagonistic bumps.
+
+## Rebuilding the rejection rates
+
+```{r panelF}
+ms <- D$mono_size
+mono_rows <- data.frame(
+  surface = c("base", "horm_0.03", "horm_0.07", "horm_0.15", "flat_0.07", "revtop_0.05", "revtop_0.15", "revmid_0.15", "base", "base"),
+  cond = c(rep("null", 8), "bumpC_0.25", "bumpR_0.20"),
+  name = c("Monotone", "Hormesis 1.03", "Hormesis 1.07", "Hormesis 1.15", "Inactive drug at 1.07",
+           "Top-dose rebound 0.05", "Top-dose rebound 0.15", "Middle reversal 0.15", "Raised cell 0.25", "Raised row 0.20"))
+Fz <- ms[ms$design == "S" & ms$I == 5, ]
+Ft <- bind_rows(lapply(seq_len(nrow(mono_rows)), function(i) {
+  r <- mono_rows[i, ]
+  y <- Fz[Fz$surface == r$surface & Fz$cond == r$cond, ]
+  kT <- sum(le(y$p, 0.05)); kM <- sum(le(y$p_mean, 0.05))
+  data.frame(truth = r$name, n = nrow(y),
+             T_SIR = kT / nrow(y), T_lo = wilson(kT, nrow(y))$lo, T_hi = wilson(kT, nrow(y))$hi,
+             V2Sp = kM / nrow(y), V_lo = wilson(kM, nrow(y))$lo, V_hi = wilson(kM, nrow(y))$hi)
+}))
+kb(Ft, digits = 4, row.names = FALSE, format.args = list(big.mark = ","))
+fj <- read_result(file.path(SIM, "fig6_numbers.json"))$F
+cat("Largest absolute difference to fig6_numbers.json:",
+    format(max(abs(Ft$T_SIR - unlist(fj[[1]])[Ft$truth]), abs(Ft$V2Sp - unlist(fj$V2Sp)[Ft$truth])), digits = 2), "\n")
+```
+
+```{r panelF-plot, fig.height=4.2}
+Fp <- bind_rows(
+  data.frame(truth = Ft$truth, test = "SIR statistic", rate = Ft$T_SIR, lo = Ft$T_lo, hi = Ft$T_hi),
+  data.frame(truth = Ft$truth, test = "Companion mean test (V2Sp)", rate = Ft$V2Sp, lo = Ft$V_lo, hi = Ft$V_hi))
+Fp$truth <- factor(Fp$truth, levels = rev(Ft$truth))
+pF <- ggplot(Fp, aes(rate, truth, color = test, shape = test)) +
+  geom_vline(xintercept = 0.05, linetype = 2, color = "gray50") +
+  geom_pointrange(aes(xmin = lo, xmax = hi), position = position_dodge(width = 0.5), size = 0.35) +
+  scale_color_manual(values = c("SIR statistic" = pal[["blue"]], "Companion mean test (V2Sp)" = pal[["red"]])) +
+  coord_cartesian(xlim = c(0, 0.08)) +
+  labs(x = expression("Rejection rate ("*alpha==0.05*")"), y = NULL, color = NULL, shape = NULL)
+pF
+```
+
+The largest false-positive rates over all non-monotone truths in design S (each cell of the table is one grid, noise law and truth, with 2,000 datasets), and the independent re-estimates of the two hormesis settings on 20,000 datasets, are the numbers behind the statement that no truth raised the size beyond Monte Carlo error.
+
+```{r mono-power}
+mp <- D$mono_power
+mpw <- bind_rows(
+  mp[mp$design == "S" & mp$law == "C" & mp$cond == "syn_hdblock_0.80" & mp$surface %in% c("base", "horm_0.07", "horm_0.15"), ] %>%
+    group_by(design, cond, surface) %>% summarise(T_SIR = mean(le(p, 0.05)), V2Sp = mean(le(p_mean, 0.05)), n = n(), .groups = "drop"),
+  mp[mp$design == "P" & mp$law == "C" & mp$cond == "dip_0.50" & mp$surface %in% c("base", "revmid_0.05"), ] %>%
+    group_by(design, cond, surface) %>% summarise(T_SIR = mean(le(p, 0.05)), V2Sp = mean(le(p_mean, 0.05)), n = n(), .groups = "drop"))
+kb(mpw, row.names = FALSE)
+check("Design-S power against a high-dose block, monotone truth (supplement)", 0.272, mpw$T_SIR[mpw$design == "S" & mpw$surface == "base"], 5e-4)
+check("Design-S power against a high-dose block, hormesis 1.15 (supplement)", 0.122, mpw$T_SIR[mpw$design == "S" & mpw$surface == "horm_0.15"], 5e-4)
+check("Design-P power against a dip next to a reversed dose, monotone truth (supplement)", 0.326, mpw$T_SIR[mpw$design == "P" & mpw$surface == "base"], 5e-4)
+check("Design-P power against a dip next to a reversed dose, reversal (supplement)", 0.098, mpw$T_SIR[mpw$design == "P" & mpw$surface == "revmid_0.05"], 5e-4)
+```
+
+The power side of the same question: monotone projection can smooth away synergy that sits next to a hormetic or reversed dose, which is a loss of power and not of validity. The rows above compare the same synergy patterns under a monotone truth and under strong hormesis or a reversal (O'Neil SD law, 1,000 matrices per row).
+
+```{r mono-max}
+nonmono <- ms[ms$design == "S" & as.logical(ms$nonmono_truth), ] %>% group_by(I, law, surface, cond) %>%
+  summarise(k = sum(le(p, 0.05)), n = n(), .groups = "drop") %>% mutate(rate = k / n) %>% arrange(desc(rate))
+top <- head(nonmono, 5)
+top <- cbind(top, wilson(top$k, top$n)[, c("lo", "hi")])
+kb(top, row.names = FALSE)
+base_S <- ms[ms$design == "S" & ms$surface == "base" & ms$cond == "null", ]
+cat(sprintf("Monotone baseline in design S: %.4f over %s datasets\n", mean(le(base_S$p, 0.05)), format(nrow(base_S), big.mark = ",")))
+cfm <- bind_rows(lapply(c("S5Bhorm_0.07", "S5BhormA_0.07"), function(s) {
+  d <- read_parquet(file.path(SIM, paste0("fig6_monotone_confirm_", s, ".parquet")))
+  data.frame(setting = s, n = nrow(d), rate_T = mean(le(d$p, 0.05)))
+}))
+kb(cfm, row.names = FALSE)
+check("Largest design-S size over non-monotone truths (supplement)", 0.0495, top$rate[1], 5e-5)
+check("Re-estimate of that setting on 20,000 datasets (supplement)", 0.0447, max(cfm$rate_T), 5e-5)
+```
+
+## What do we see?
+
+For monotone truths in design S, $T_{\mathrm{SIR}}$ rejects `r f4(Ft$T_SIR[1])` of 6,000 matrices. No non-monotone truth raises it: hormesis gives `r f4(Ft$T_SIR[2])`, `r f4(Ft$T_SIR[3])` and `r f4(Ft$T_SIR[4])` at 1.03, 1.07 and 1.15, an inactive drug at 1.07 gives `r f4(Ft$T_SIR[5])`, top-dose rebounds `r f4(Ft$T_SIR[6])` and `r f4(Ft$T_SIR[7])`, and a middle reversal of 0.15 gives `r f4(Ft$T_SIR[8])`. The rates fall below the monotone baseline, with the strongest hormesis lowest. The antagonistic bumps are conservative by construction (`r f4(Ft$T_SIR[9])` for a raised cell, `r f4(Ft$T_SIR[10])` for a raised row). The companion mean test V2Sp stays in the range `r f4(min(Ft$V2Sp[1:8]))` to `r f4(max(Ft$V2Sp[1:8]))` over the same eight rows, against `r f4(Ft$V2Sp[1])` for monotone truths.
+
+The largest rate over all non-monotone truths in design S, taken per grid, noise law and truth with 2,000 datasets each, is `r f4(top$rate[1])` (Wilson interval `r f4(top$lo[1])` to `r f4(top$hi[1])`), against `r f4(mean(le(base_S$p, 0.05)))` for the monotone baseline over `r format(nrow(base_S), big.mark = ",")` datasets, and the re-estimate on 20,000 datasets is `r f4(max(cfm$rate_T))`. The cost of non-monotonicity shows up in power: strong hormesis (1.15) lowers design-S power against a high-dose block from `r f3(mpw$T_SIR[mpw$design == "S" & mpw$surface == "base"])` to `r f3(mpw$T_SIR[mpw$design == "S" & mpw$surface == "horm_0.15"])`, and a synergistic dip next to a reversed dose is smoothed away by the isotonic fit (design P: `r f3(mpw$T_SIR[mpw$design == "P" & mpw$surface == "base"])` to `r f3(mpw$T_SIR[mpw$design == "P" & mpw$surface == "revmid_0.05"])`).
+
+## Decision point
+
+**Decision point.** Weak departures from monotonicity do not threaten the level. They can cost power, so strongly hormetic or reversed single agents should be reported as such. The next section shows the package calls for all three imperfections.
+
+# Figure 6, assembled
+
+```{r fig6-assembled, fig.width=11, fig.height=12}
+((pA + pB) / (pC + pD) / (pE + pF)) +
+  plot_annotation(tag_levels = "A", tag_suffix = ".") &
+  theme(plot.tag = element_text(face = "bold"), legend.text = element_text(size = 8))
+```
+
+The six panels read from top to bottom as one argument. In Panel A the five treatments sit next to each other within each grid and below the dashed 0.05 line. In Panel B the bars shrink as information is removed, except for the single-cell corner pattern. In Panel C the dashed no-screen curves rise with the error rate on the synthetic matrices while the solid screened curves stay at about 0.05, and the bank squares stay there in both arms. In Panel D the clean and error bars are about the same height once the screen is on. In Panel E the single-plate flags are high for false calls and for single-cell synergy and near zero for saturating synergy. In Panel F every non-monotone truth falls at or below the monotone baseline.. Panel labels follow the paper (A to F); the tables above give every plotted value.
+
+# How to use the code
+
+All three imperfections are handled inside `sir_fit()`. Rows and columns are ordered by increasing dose with zero first; missing wells are `NA`. The calls below use the default two-stage reference (399 plates, then 9,999 when the first-stage p-value is at most 0.05), a fixed seed, and a 5x5 plate with synergy in the high-dose corner.
+
+```{r pkg-setup}
+a <- c(1, 0.92, 0.75, 0.55, 0.38)
+b <- c(1, 0.88, 0.70, 0.50, 0.35)
+truth <- outer(a, b)
+truth[4:5, 4:5] <- truth[4:5, 4:5] * exp(-0.7)
+set.seed(11)
+Y <- truth + matrix(rnorm(25, sd = 0.03), 5)
+Y[1, 1] <- 1
+noise <- sir_noise_parametric(sd = 0.03)
+
+fit_full <- sir_fit(Y, noise = noise, seed = 1)
+
+Y_wells <- Y
+Y_wells[4, 4] <- NA; Y_wells[4, 5] <- NA; Y_wells[5, 5] <- NA
+fit_wells <- sir_fit(Y_wells, noise = noise, seed = 1)
+
+Y_row <- Y
+Y_row[3, 1] <- NA            # a single-agent well of the row drug
+fit_row <- sir_fit(Y_row, noise = noise, seed = 1)
+
+res <- data.frame(
+  plate = c("Complete", "Three corner wells missing", "Single-agent well missing"),
+  analyzed_grid = sapply(list(fit_full, fit_wells, fit_row), function(f) paste(dim(f$analyzed_matrix), collapse = " x ")),
+  t_std = sapply(list(fit_full, fit_wells, fit_row), `[[`, "t_std"),
+  p_tstd = sapply(list(fit_full, fit_wells, fit_row), `[[`, "p_tstd"))
+kb(res, digits = 4, row.names = FALSE)
+```
+
+`analyzed_matrix` shows what was actually tested: the third plate is analyzed as a 4 x 5 grid because the missing single-agent well removed its dose row. The log records what was set aside.
+
+```{r pkg-log}
+cat("Missing cells (zero-based, original grid):", toJSON(fit_wells$log$missing_cells, auto_unbox = TRUE), "\n")
+cat("Dropped single-agent doses:", toJSON(fit_row$log$dropped_doses, auto_unbox = TRUE), "\n")
+cat("Note:", fit_row$log$notes, "\n")
+```
+
+The fragility flags are attached to significant single-plate fits. The complete plate above has $p<0.05$, so its checks were computed.
+
+```{r pkg-fragility}
+fg <- fit_full$fragility
+data.frame(check = c("Most influential combination cell set to missing", "Most influential single-agent dose row dropped"),
+           target = c(paste0("cell (", paste(unlist(fg$loco_cell) + 1, collapse = ", "), ")"),
+                      sprintf("drug %s, dose index %d (zero-based)", fg$sa_dose[[1]], fg$sa_dose[[2]])),
+           p_after = c(fg$loco_p, fg$sa_p), flagged = c(fg$loco_flag, fg$sa_flag)) %>% kb(row.names = FALSE)
+```
+
+Indices in `fragility` and in the log are zero-based positions in the original grid; the cell target above adds one so that it reads against the input matrix, and the dose index counts the zero dose as 0.
+
+With replicate plates, supply an array with dimensions `c(replicates, rows, columns)`. The screen is on by default for three or more values per well (`screen_replicates = TRUE`, `screen_c = 5`) and the same rule is applied to every reference plate. The block below places a gross error in one replicate of one single-agent well of a truly Bliss plate and compares the test with and without the screen over several simulated datasets.
+
+```{r pkg-screen}
+tr0 <- outer(a, b)
+one_run <- function(seed) {
+  set.seed(seed)
+  R <- array(0, c(4, 5, 5))
+  for (r in 1:4) { R[r, , ] <- tr0 + matrix(rnorm(25, sd = 0.03), 5); R[r, 1, 1] <- 1 }
+  Re <- R
+  Re[2, 3, 1] <- Re[2, 3, 1] + 0.5          # gross error in one replicate of one single-agent well
+  p <- function(arr, sc) sir_fit(arr, noise = noise, design = "R", seed = 2, screen_replicates = sc)$p_tstd
+  data.frame(seed = seed, clean = p(R, TRUE), error_no_screen = p(Re, FALSE), error_screen = p(Re, TRUE))
+}
+demo <- bind_rows(lapply(101:140, one_run))
+kb(head(demo, 6), digits = 4, row.names = FALSE)
+summ <- data.frame(arm = c("Clean data", "One gross error, no screen", "One gross error, screen"),
+                   share_p_le_0.05 = sapply(demo[, -1], function(v) mean(le(v, 0.05))))
+kb(summ, digits = 3, row.names = FALSE)
+```
+
+On the complete plate the SIR statistic is `r round(res$t_std[1], 1)` with $p=$ `r res$p_tstd[1]`. Removing the three corner wells (cells (4,4), (4,5) and (5,5) of the input matrix) removes three of the four synergistic cells, and the statistic drops to `r round(res$t_std[2], 1)` with $p=$ `r res$p_tstd[2]`: the test does not impute them, and the evidence they carried is gone. Dropping the single-agent well `Y[3, 1]` leaves a 4 x 5 grid; the statistic is unchanged at `r round(res$t_std[3], 1)` because the dropped row held no positive excess, while the p-value, `r res$p_tstd[3]`, comes from a reference rebuilt on the reduced grid.
+
+For the complete plate, setting the most influential cell to missing leaves $p=$ `r f4(fg$loco_p)` (not flagged), while dropping the most influential single-agent dose row raises it to `r f4(fg$sa_p)` (flagged). The call depends on that single-agent row, which is what a reader should know before acting on a single-plate result.
+
+In the replicate demonstration, the truth is exact Bliss in every draw. With one gross error in one single-agent well and no screen, `r pct1(summ$share_p_le_0.05[2])` of the `r nrow(demo)` draws were called at 0.05 (the minimum p-value of the 9,999-plate second stage is 0.0001); with the screen the share is `r pct1(summ$share_p_le_0.05[3])`, equal to the clean-data share of `r pct1(summ$share_p_le_0.05[1])`. Forty draws cannot resolve a rate near 0.05 (the standard error at 0.05 is about 0.035), so this block illustrates the mechanism and does not replace the 36,000-dataset size study above.
+
+# Conclusions
+
+## What we found
+
+- **Missing wells keep the level.** With one to three combination wells missing, or a single-agent dose row dropped, the rejection rate of $T_{\mathrm{SIR}}$ at exact Bliss was `r f4(min(r05[-1]))` to `r f4(max(r05[-1]))`, against `r f4(r05[["full"]])` for the complete grid on the same 36,000 datasets; all paired differences have intervals that contain zero.
+- **Missing wells cost power in proportion to what they remove.** The mean loss over 72 settings is `r f3(-pc[["int1"]])`, `r f3(-pc[["int2"]])` and `r f3(-pc[["int3"]])` for one, two and three missing wells and `r f3(-pc[["rowdrop"]])` for a dropped single-agent row. The largest loss, `r f3(-loss$min[3])`, occurs when the single synergistic cell is itself missing.
+- **A missing well is bounded, not filled.** On the real O'Neil screen the isotonic bounds predict a held-out well with median RMSE `r f3(mw$median_rmse_iso)` against `r f3(mw$median_rmse_bliss)` for the Bliss prediction.
+- **Gross errors in single-agent wells are the one real threat to the size, and the replicate screen removes it.** The size is `r f4(rate_of("noscreen", 0.004))` and `r f4(rate_of("noscreen", 0.02))` without the screen at 0.4% and 2% of wells, and `r f4(rate_of("screen", 0.004))` and `r f4(rate_of("screen", 0.02))` with it, at no cost on clean data.
+- **Single-plate calls carry fragility flags.** They distinguish calls that rest on one cell or one single-agent row from calls with broad support, and they say nothing about whether a measurement is wrong.
+- **Weak monotonicity violations do not raise the size.** The largest rate over non-monotone truths is `r f4(top$rate[1])`, against a monotone baseline of `r f4(mean(le(base_S$p, 0.05)))`.
+
+## What it means
+
+Imperfect plates do not require a different test. The same statistic and the same reference, with the observed cells and the reduced grid, give valid p-values when wells are missing, and the replicate screen, applied to data and reference plates alike, handles gross errors when replicates exist. What the analyst gives up is power, in a proportion that the simulations quantify.
+
+## Limits
+
+- The replicate screen is not a summary that is nondecreasing in each replicate, so the least-favorable-null theorem does not cover it. Its level is established by simulation only, with four replicates; with two replicates it cannot tell which one is wrong.
+- Single plates are not screened. The fragility checks describe sensitivity and do not test for outliers.
+- The simulations use the noise laws and single-agent surfaces described in the paper. The region scan was not evaluated with missing wells or replicate screening, and on an incomplete single-plate grid the companion mean p-value is exploratory because its standard error is unavailable.
+- Strong hormesis and reversals cost power through the monotone projection, even though they do not change the level.
+
+## What to report
+
+When publishing a result from imperfect plates, report the number of missing combination wells and dropped single-agent doses (`fit$log`), the number of screened replicates, and for significant single plates the two fragility checks. A call that fails the dose-row check should be described as dependent on one single-agent row.
+
+# Checks against the paper
+
+Every number below was computed in this notebook from the stage outputs and compared with the value printed in the paper or the supplement. A row matches when the computed value rounds to the printed one (the tolerance is half a unit in the last printed digit).
+
+```{r checks-table}
+CHECKS$match <- abs(CHECKS$computed - CHECKS$paper) <= CHECKS$tol + 1e-12
+out <- CHECKS[, c("item", "paper", "computed", "match")]
+kbl(out, digits = 5, row.names = FALSE, format.args = list(big.mark = ",")) %>%
+  kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE) %>%
+  row_spec(which(!CHECKS$match), bold = TRUE, color = "white", background = "#B2182B")
+cat(sum(CHECKS$match), "of", nrow(CHECKS), "numbers match.\n")
+```
+
+# Session information
+
+```{r session}
+sessionInfo()$R.version$version.string
+cat("SIR", as.character(packageVersion("SIR")), "\n")
+```
