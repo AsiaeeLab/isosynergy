@@ -153,8 +153,8 @@ DrugCombDB results (`dataset_release/`) are deposited on Zenodo
 
 ## Citation
 
-See `CITATION.cff`. Released versions are archived on Zenodo (version 0.2.0:
-[10.5281/zenodo.23302246](https://doi.org/10.5281/zenodo.23302246); all versions:
+See `CITATION.cff`. Released versions are archived on Zenodo (version 0.2.1:
+[10.5281/zenodo.24215075](https://doi.org/10.5281/zenodo.24215075); all versions:
 [10.5281/zenodo.20604671](https://doi.org/10.5281/zenodo.20604671)).
 
 ## License
