@@ -89,7 +89,7 @@ def panel_c(ax):
     s = rd('fig6_screen_size.parquet')
     s = s[s.I == 5]
     lev_x = {0.0: 0.0, 0.004: 0.4, 0.01: 1.0, 0.02: 2.0}
-    styles = [('C', '#0072B2', 'o', "Synthetic, O'Neil SD law"), ('A', '#56B4E9', '^', 'Synthetic, additive')]
+    styles = [('C', '#0072B2', 'o', "Synthetic, O'Neil SD curve"), ('A', '#56B4E9', '^', 'Synthetic, additive')]
     NUM['C_synth'] = {}
     for (law, col, mk, lab) in styles:
         y = s[s.law == law]
@@ -120,7 +120,7 @@ def panel_c(ax):
     ax.set_ylim(0.025, top)
     ax.set_ylabel('Rejection rate ($\\alpha = 0.05$)')
     from matplotlib.lines import Line2D
-    h1 = [Line2D([], [], color='#0072B2', marker='o', ls='', ms=3.6, label="Synthetic, O'Neil SD law"), Line2D([], [], color='#56B4E9', marker='^', ls='', ms=3.6, label='Synthetic, additive'), Line2D([], [], color='0.2', marker='s', ls='', ms=3.4, label="O'Neil residual bank")]
+    h1 = [Line2D([], [], color='#0072B2', marker='o', ls='', ms=3.6, label="Synthetic, O'Neil SD curve"), Line2D([], [], color='#56B4E9', marker='^', ls='', ms=3.6, label='Synthetic, additive'), Line2D([], [], color='0.2', marker='s', ls='', ms=3.4, label="O'Neil residual bank")]
     h2 = [Line2D([], [], color='0.4', marker='o', mfc='white', ls='--', ms=3.4, lw=0.8, label='No screen'), Line2D([], [], color='0.4', marker='o', ls='-', ms=3.4, lw=0.8, label='Replicate screen')]
     leg = ax.legend(handles=h1, loc='upper left', handletextpad=0.4, borderaxespad=0.1, labelspacing=0.3)
     ax.add_artist(leg)

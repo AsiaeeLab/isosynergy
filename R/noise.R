@@ -105,3 +105,35 @@ sir_plate_variance <- function(Y, groups, n_folds = 2L) {
   .sir_python()$PlateVarianceTable(Y, groups = as.list(as.character(groups)),
     n_folds = .sir_number(n_folds, "n_folds", 2, .Machine$integer.max, TRUE))
 }
+
+#' Check an SD Curve Against Replicate Plates
+#'
+#' Bins wells by their replicate mean and compares the observed pooled
+#' single-replicate SD in each bin with the root mean of the variance that the
+#' curve predicts at those wells. Use it before a screen to check the variance
+#' function of a parametric reference, on replicate plates of the same assay
+#' that were not used to estimate the curve. Ratios far from one in bins that
+#' hold many of the analyzed wells suggest the curve is misspecified there; 0.8
+#' to 1.25 is a heuristic band, not a calibration threshold. A constant-SD
+#' reference on heteroscedastic data rejected 0.16 to 0.20 of null matrices at
+#' level 0.05 in the accompanying article. The check cannot detect an offset
+#' shared by all plates of an experiment, which replicate centering removes.
+#' @inheritParams sir_sd_from_replicates
+#' @param curve An SD curve from [sir_sd_curve()] or [sir_sd_from_replicates()],
+#'   or a noise model from [sir_noise_parametric()] or [sir_noise_bank()].
+#' @param n_bins Number of quantile bins of mean viability.
+#' @return A data frame with one row per bin: `mean_viability`, `n_wells`,
+#'   `observed_sd`, `model_sd` and `ratio`.
+#' @export
+sir_check_noise <- function(Y, curve, n_bins = 10L, min_wells = 20L,
+                            wells = c("combination", "all")) {
+  Y <- .sir_array(Y, 4L)
+  sd <- if (reticulate::py_has_attr(curve, "sd")) curve$sd else curve
+  rows <- .sir_python()$check_sd_curve(Y, sd,
+    n_bins = .sir_number(n_bins, "n_bins", 2, .Machine$integer.max, TRUE),
+    min_wells = .sir_number(min_wells, "min_wells", 1, .Machine$integer.max, TRUE),
+    wells = match.arg(wells))
+  rows <- reticulate::py_to_r(rows)
+  if (!length(rows)) stop("no bin has min_wells wells; lower min_wells or n_bins.", call. = FALSE)
+  do.call(rbind, lapply(rows, as.data.frame))
+}

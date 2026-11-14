@@ -28936,3 +28936,166 @@ paper.dose_matched.tsir,0.669,0.0005,Spearman rho,"Results, score reproducibilit
 paper.dose_differ.activity,0.792,0.0005,Spearman rho,"Results, score reproducibility; Supplement S11",csv|realdata/repro_continuous.csv|25|spearman,real
 paper.dose_differ.mean_excess,0.332,0.0005,Spearman rho,"Results, score reproducibility; Supplement S11",csv|realdata/repro_continuous.csv|26|spearman,real
 paper.dose_differ.tsir,0.468,0.0005,Spearman rho,"Results, score reproducibility; Supplement S11",csv|realdata/repro_continuous.csv|27|spearman,real
+table.sim.S12.0,0.025,0,printed value,Supplementary Table S12,table|tables/tabS12_raw.tex|0|2,simulation
+table.sim.S12.1,0.030,0,printed value,Supplementary Table S12,table|tables/tabS12_raw.tex|1|2,simulation
+table.sim.S12.2,0.040,0,printed value,Supplementary Table S12,table|tables/tabS12_raw.tex|2|2,simulation
+table.sim.S12.3,0.028,0,printed value,Supplementary Table S12,table|tables/tabS12_raw.tex|3|2,simulation
+table.sim.S12.4,0.038,0,printed value,Supplementary Table S12,table|tables/tabS12_raw.tex|4|2,simulation
+table.sim.S12.5,0.041,0,printed value,Supplementary Table S12,table|tables/tabS12_raw.tex|5|2,simulation
+table.sim.S12.6,0.043,0,printed value,Supplementary Table S12,table|tables/tabS12_raw.tex|6|2,simulation
+table.sim.S12.7,0.010,0,printed value,Supplementary Table S12,table|tables/tabS12_raw.tex|7|2,simulation
+table.sim.S12.8,0.041,0,printed value,Supplementary Table S12,table|tables/tabS12_raw.tex|8|2,simulation
+table.sim.S12.9,0.042,0,printed value,Supplementary Table S12,table|tables/tabS12_raw.tex|9|2,simulation
+table.sim.S12.10,0.037,0,printed value,Supplementary Table S12,table|tables/tabS12_raw.tex|10|2,simulation
+table.sim.S12.11,0.013,0,printed value,Supplementary Table S12,table|tables/tabS12_raw.tex|11|2,simulation
+table.sim.S12.12,0.049,0,printed value,Supplementary Table S12,table|tables/tabS12_raw.tex|12|2,simulation
+table.sim.S12.13,0.045,0,printed value,Supplementary Table S12,table|tables/tabS12_raw.tex|13|2,simulation
+table.sim.S12.14,0.041,0,printed value,Supplementary Table S12,table|tables/tabS12_raw.tex|14|2,simulation
+table.sim.S12.15,0.048,0,printed value,Supplementary Table S12,table|tables/tabS12_raw.tex|15|2,simulation
+table.sim.S12.16,0.043,0,printed value,Supplementary Table S12,table|tables/tabS12_raw.tex|16|2,simulation
+table.sim.S12.17,0.050,0,printed value,Supplementary Table S12,table|tables/tabS12_raw.tex|17|2,simulation
+table.sim.S12.18,0.051,0,printed value,Supplementary Table S12,table|tables/tabS12_raw.tex|18|2,simulation
+table.sim.S12.19,0.045,0,printed value,Supplementary Table S12,table|tables/tabS12_raw.tex|19|2,simulation
+table.sim.S12.20,0.051,0,printed value,Supplementary Table S12,table|tables/tabS12_raw.tex|20|2,simulation
+table.sim.S12.21,0.054,0,printed value,Supplementary Table S12,table|tables/tabS12_raw.tex|21|2,simulation
+table.sim.S12.22,0.051,0,printed value,Supplementary Table S12,table|tables/tabS12_raw.tex|22|2,simulation
+table.sim.S12.23,0.052,0,printed value,Supplementary Table S12,table|tables/tabS12_raw.tex|23|2,simulation
+table.sim.S12.24,0.404,0,printed value,Supplementary Table S12,table|tables/tabS12_raw.tex|24|2,simulation
+table.sim.S12.25,0.375,0,printed value,Supplementary Table S12,table|tables/tabS12_raw.tex|25|2,simulation
+table.sim.S12.26,0.233,0,printed value,Supplementary Table S12,table|tables/tabS12_raw.tex|26|2,simulation
+table.sim.S12.27,0.158,0,printed value,Supplementary Table S12,table|tables/tabS12_raw.tex|27|2,simulation
+table.sim.S12.28,0.231,0,printed value,Supplementary Table S12,table|tables/tabS12_raw.tex|28|2,simulation
+table.sim.S12.29,0.174,0,printed value,Supplementary Table S12,table|tables/tabS12_raw.tex|29|2,simulation
+table.sim.S12.30,0.037,0,printed value,Supplementary Table S12,table|tables/tabS12_raw.tex|30|2,simulation
+table.sim.S12.31,0.143,0,printed value,Supplementary Table S12,table|tables/tabS12_raw.tex|31|2,simulation
+table.sim.S12.32,0.082,0,printed value,Supplementary Table S12,table|tables/tabS12_raw.tex|32|2,simulation
+table.sim.S12.33,0.076,0,printed value,Supplementary Table S12,table|tables/tabS12_raw.tex|33|2,simulation
+table.sim.S12.34,0.090,0,printed value,Supplementary Table S12,table|tables/tabS12_raw.tex|34|2,simulation
+table.sim.S12.35,0.247,0,printed value,Supplementary Table S12,table|tables/tabS12_raw.tex|35|2,simulation
+table.sim.S12.36,0.344,0,printed value,Supplementary Table S12,table|tables/tabS12_raw.tex|36|2,simulation
+table.sim.S12.37,0.320,0,printed value,Supplementary Table S12,table|tables/tabS12_raw.tex|37|2,simulation
+table.sim.S12.38,0.218,0,printed value,Supplementary Table S12,table|tables/tabS12_raw.tex|38|2,simulation
+table.sim.S12.39,0.162,0,printed value,Supplementary Table S12,table|tables/tabS12_raw.tex|39|2,simulation
+table.sim.S12.40,0.086,0,printed value,Supplementary Table S12,table|tables/tabS12_raw.tex|40|2,simulation
+table.sim.S12.41,0.092,0,printed value,Supplementary Table S12,table|tables/tabS12_raw.tex|41|2,simulation
+table.sim.S12.42,0.075,0,printed value,Supplementary Table S12,table|tables/tabS12_raw.tex|42|2,simulation
+table.sim.S12.43,0.034,0,printed value,Supplementary Table S12,table|tables/tabS12_raw.tex|43|2,simulation
+table.sim.S12.44,0.997,0,printed value,Supplementary Table S12,table|tables/tabS12_raw.tex|44|2,simulation
+table.sim.S12.45,0.995,0,printed value,Supplementary Table S12,table|tables/tabS12_raw.tex|45|2,simulation
+table.sim.S12.46,0.260,0,printed value,Supplementary Table S12,table|tables/tabS12_raw.tex|46|2,simulation
+table.sim.S12.47,0.774,0,printed value,Supplementary Table S12,table|tables/tabS12_raw.tex|47|2,simulation
+table.sim.S12.48,0.222,0,printed value,Supplementary Table S12,table|tables/tabS12_raw.tex|48|2,simulation
+table.sim.S12.49,0.130,0,printed value,Supplementary Table S12,table|tables/tabS12_raw.tex|49|2,simulation
+table.sim.S12.50,0.119,0,printed value,Supplementary Table S12,table|tables/tabS12_raw.tex|50|2,simulation
+table.sim.S12.51,0.447,0,printed value,Supplementary Table S12,table|tables/tabS12_raw.tex|51|2,simulation
+table.sim.S12.52,0.932,0,printed value,Supplementary Table S12,table|tables/tabS12_raw.tex|52|2,simulation
+table.sim.S12.53,0.896,0,printed value,Supplementary Table S12,table|tables/tabS12_raw.tex|53|2,simulation
+table.sim.S12.54,0.398,0,printed value,Supplementary Table S12,table|tables/tabS12_raw.tex|54|2,simulation
+table.sim.S12.55,0.907,0,printed value,Supplementary Table S12,table|tables/tabS12_raw.tex|55|2,simulation
+table.sim.S12.56,0.978,0,printed value,Supplementary Table S12,table|tables/tabS12_raw.tex|56|2,simulation
+table.sim.S12.57,0.891,0,printed value,Supplementary Table S12,table|tables/tabS12_raw.tex|57|2,simulation
+table.sim.S12.58,0.327,0,printed value,Supplementary Table S12,table|tables/tabS12_raw.tex|58|2,simulation
+table.sim.S12.59,0.992,0,printed value,Supplementary Table S12,table|tables/tabS12_raw.tex|59|2,simulation
+table.sim.S12.60,0.907,0,printed value,Supplementary Table S12,table|tables/tabS12_raw.tex|60|2,simulation
+table.sim.S12.61,0.621,0,printed value,Supplementary Table S12,table|tables/tabS12_raw.tex|61|2,simulation
+table.sim.S12.62,0.867,0,printed value,Supplementary Table S12,table|tables/tabS12_raw.tex|62|2,simulation
+table.sim.S12.63,0.913,0,printed value,Supplementary Table S12,table|tables/tabS12_raw.tex|63|2,simulation
+table.sim.S12.64,0.843,0,printed value,Supplementary Table S12,table|tables/tabS12_raw.tex|64|2,simulation
+table.sim.S12.65,0.787,0,printed value,Supplementary Table S12,table|tables/tabS12_raw.tex|65|2,simulation
+table.sim.S12.66,0.384,0,printed value,Supplementary Table S12,table|tables/tabS12_raw.tex|66|2,simulation
+table.sim.S12.67,0.827,0,printed value,Supplementary Table S12,table|tables/tabS12_raw.tex|67|2,simulation
+table.sim.S12.68,0.177,0,printed value,Supplementary Table S12,table|tables/tabS12_raw.tex|68|2,simulation
+table.sim.S12.69,0.191,0,printed value,Supplementary Table S12,table|tables/tabS12_raw.tex|69|2,simulation
+table.sim.S12.70,0.100,0,printed value,Supplementary Table S12,table|tables/tabS12_raw.tex|70|2,simulation
+table.sim.S12.71,0.132,0,printed value,Supplementary Table S12,table|tables/tabS12_raw.tex|71|2,simulation
+table.sim.S12.72,1.000,0,printed value,Supplementary Table S12,table|tables/tabS12_raw.tex|72|2,simulation
+table.sim.S12.73,1.000,0,printed value,Supplementary Table S12,table|tables/tabS12_raw.tex|73|2,simulation
+table.sim.S12.74,0.967,0,printed value,Supplementary Table S12,table|tables/tabS12_raw.tex|74|2,simulation
+table.sim.S12.75,1.000,0,printed value,Supplementary Table S12,table|tables/tabS12_raw.tex|75|2,simulation
+table.sim.S12.76,0.998,0,printed value,Supplementary Table S12,table|tables/tabS12_raw.tex|76|2,simulation
+table.sim.S12.77,0.952,0,printed value,Supplementary Table S12,table|tables/tabS12_raw.tex|77|2,simulation
+table.sim.S12.78,0.786,0,printed value,Supplementary Table S12,table|tables/tabS12_raw.tex|78|2,simulation
+table.sim.S12.79,0.999,0,printed value,Supplementary Table S12,table|tables/tabS12_raw.tex|79|2,simulation
+table.sim.S12.80,0.417,0,printed value,Supplementary Table S12,table|tables/tabS12_raw.tex|80|2,simulation
+table.sim.S12.81,0.404,0,printed value,Supplementary Table S12,table|tables/tabS12_raw.tex|81|2,simulation
+table.sim.S12.82,0.221,0,printed value,Supplementary Table S12,table|tables/tabS12_raw.tex|82|2,simulation
+table.sim.S12.83,0.168,0,printed value,Supplementary Table S12,table|tables/tabS12_raw.tex|83|2,simulation
+table.sim.S12.84,0.254,0,printed value,Supplementary Table S12,table|tables/tabS12_raw.tex|84|2,simulation
+table.sim.S12.85,0.215,0,printed value,Supplementary Table S12,table|tables/tabS12_raw.tex|85|2,simulation
+table.sim.S12.86,0.062,0,printed value,Supplementary Table S12,table|tables/tabS12_raw.tex|86|2,simulation
+table.sim.S12.87,0.133,0,printed value,Supplementary Table S12,table|tables/tabS12_raw.tex|87|2,simulation
+table.sim.S12.88,0.085,0,printed value,Supplementary Table S12,table|tables/tabS12_raw.tex|88|2,simulation
+table.sim.S12.89,0.074,0,printed value,Supplementary Table S12,table|tables/tabS12_raw.tex|89|2,simulation
+table.sim.S12.90,0.102,0,printed value,Supplementary Table S12,table|tables/tabS12_raw.tex|90|2,simulation
+table.sim.S12.91,0.234,0,printed value,Supplementary Table S12,table|tables/tabS12_raw.tex|91|2,simulation
+table.sim.S12.92,0.988,0,printed value,Supplementary Table S12,table|tables/tabS12_raw.tex|92|2,simulation
+table.sim.S12.93,0.989,0,printed value,Supplementary Table S12,table|tables/tabS12_raw.tex|93|2,simulation
+table.sim.S12.94,0.306,0,printed value,Supplementary Table S12,table|tables/tabS12_raw.tex|94|2,simulation
+table.sim.S12.95,0.765,0,printed value,Supplementary Table S12,table|tables/tabS12_raw.tex|95|2,simulation
+table.sim.S12.96,0.899,0,printed value,Supplementary Table S12,table|tables/tabS12_raw.tex|96|2,simulation
+table.sim.S12.97,0.858,0,printed value,Supplementary Table S12,table|tables/tabS12_raw.tex|97|2,simulation
+table.sim.S12.98,0.380,0,printed value,Supplementary Table S12,table|tables/tabS12_raw.tex|98|2,simulation
+table.sim.S12.99,0.853,0,printed value,Supplementary Table S12,table|tables/tabS12_raw.tex|99|2,simulation
+table.sim.S12.100,0.921,0,printed value,Supplementary Table S12,table|tables/tabS12_raw.tex|100|2,simulation
+table.sim.S12.101,0.807,0,printed value,Supplementary Table S12,table|tables/tabS12_raw.tex|101|2,simulation
+table.sim.S12.102,0.346,0,printed value,Supplementary Table S12,table|tables/tabS12_raw.tex|102|2,simulation
+table.sim.S12.103,0.955,0,printed value,Supplementary Table S12,table|tables/tabS12_raw.tex|103|2,simulation
+table.sim.S12.104,0.783,0,printed value,Supplementary Table S12,table|tables/tabS12_raw.tex|104|2,simulation
+table.sim.S12.105,0.569,0,printed value,Supplementary Table S12,table|tables/tabS12_raw.tex|105|2,simulation
+table.sim.S12.106,0.752,0,printed value,Supplementary Table S12,table|tables/tabS12_raw.tex|106|2,simulation
+table.sim.S12.107,0.772,0,printed value,Supplementary Table S12,table|tables/tabS12_raw.tex|107|2,simulation
+table.sim.S12.108,1.000,0,printed value,Supplementary Table S12,table|tables/tabS12_raw.tex|108|2,simulation
+table.sim.S12.109,1.000,0,printed value,Supplementary Table S12,table|tables/tabS12_raw.tex|109|2,simulation
+table.sim.S12.110,0.974,0,printed value,Supplementary Table S12,table|tables/tabS12_raw.tex|110|2,simulation
+table.sim.S12.111,1.000,0,printed value,Supplementary Table S12,table|tables/tabS12_raw.tex|111|2,simulation
+table.sim.S12.112,0.322,0,printed value,Supplementary Table S12,table|tables/tabS12_raw.tex|112|2,simulation
+table.sim.S12.113,0.240,0,printed value,Supplementary Table S12,table|tables/tabS12_raw.tex|113|2,simulation
+table.sim.S12.114,0.750,0,printed value,Supplementary Table S12,table|tables/tabS12_raw.tex|114|2,simulation
+table.sim.S12.115,0.603,0,printed value,Supplementary Table S12,table|tables/tabS12_raw.tex|115|2,simulation
+table.sim.S12.116,0.509,0,printed value,Supplementary Table S12,table|tables/tabS12_raw.tex|116|2,simulation
+table.sim.S12.117,0.359,0,printed value,Supplementary Table S12,table|tables/tabS12_raw.tex|117|2,simulation
+table.sim.S12.118,0.994,0,printed value,Supplementary Table S12,table|tables/tabS12_raw.tex|118|2,simulation
+table.sim.S12.119,0.938,0,printed value,Supplementary Table S12,table|tables/tabS12_raw.tex|119|2,simulation
+table.sim.S13.0,0.052,0,printed value,Supplementary Table S13,table|tables/tabS13_offset.tex|0|1,simulation
+table.sim.S13.1,0.056,0,printed value,Supplementary Table S13,table|tables/tabS13_offset.tex|1|1,simulation
+table.sim.S13.2,0.042,0,printed value,Supplementary Table S13,table|tables/tabS13_offset.tex|2|1,simulation
+table.sim.S13.3,0.072,0,printed value,Supplementary Table S13,table|tables/tabS13_offset.tex|3|1,simulation
+table.sim.S13.4,0.073,0,printed value,Supplementary Table S13,table|tables/tabS13_offset.tex|4|1,simulation
+table.sim.S13.5,0.048,0,printed value,Supplementary Table S13,table|tables/tabS13_offset.tex|5|1,simulation
+table.sim.S13.6,0.115,0,printed value,Supplementary Table S13,table|tables/tabS13_offset.tex|6|1,simulation
+table.sim.S13.7,0.111,0,printed value,Supplementary Table S13,table|tables/tabS13_offset.tex|7|1,simulation
+table.sim.S13.8,0.076,0,printed value,Supplementary Table S13,table|tables/tabS13_offset.tex|8|1,simulation
+table.sim.S13.9,0.194,0,printed value,Supplementary Table S13,table|tables/tabS13_offset.tex|9|1,simulation
+table.sim.S13.10,0.179,0,printed value,Supplementary Table S13,table|tables/tabS13_offset.tex|10|1,simulation
+table.sim.S13.11,0.137,0,printed value,Supplementary Table S13,table|tables/tabS13_offset.tex|11|1,simulation
+table.sim.S13.12,0.248,0,printed value,Supplementary Table S13,table|tables/tabS13_offset.tex|12|1,simulation
+table.sim.S13.13,0.231,0,printed value,Supplementary Table S13,table|tables/tabS13_offset.tex|13|1,simulation
+table.sim.S13.14,0.191,0,printed value,Supplementary Table S13,table|tables/tabS13_offset.tex|14|1,simulation
+table.sim.S13.15,0.327,0,printed value,Supplementary Table S13,table|tables/tabS13_offset.tex|15|1,simulation
+table.sim.S13.16,0.311,0,printed value,Supplementary Table S13,table|tables/tabS13_offset.tex|16|1,simulation
+table.sim.S13.17,0.279,0,printed value,Supplementary Table S13,table|tables/tabS13_offset.tex|17|1,simulation
+table.sim.S13.18,0.252,0,printed value,Supplementary Table S13,table|tables/tabS13_offset.tex|18|1,simulation
+table.sim.S13.19,0.225,0,printed value,Supplementary Table S13,table|tables/tabS13_offset.tex|19|1,simulation
+table.sim.S13.20,0.146,0,printed value,Supplementary Table S13,table|tables/tabS13_offset.tex|20|1,simulation
+table.sim.S13.21,0.477,0,printed value,Supplementary Table S13,table|tables/tabS13_offset.tex|21|1,simulation
+table.sim.S13.22,0.443,0,printed value,Supplementary Table S13,table|tables/tabS13_offset.tex|22|1,simulation
+table.sim.S13.23,0.318,0,printed value,Supplementary Table S13,table|tables/tabS13_offset.tex|23|1,simulation
+table.sim.S13.24,0.777,0,printed value,Supplementary Table S13,table|tables/tabS13_offset.tex|24|1,simulation
+table.sim.S13.25,0.728,0,printed value,Supplementary Table S13,table|tables/tabS13_offset.tex|25|1,simulation
+table.sim.S13.26,0.671,0,printed value,Supplementary Table S13,table|tables/tabS13_offset.tex|26|1,simulation
+table.sim.S13.27,0.991,0,printed value,Supplementary Table S13,table|tables/tabS13_offset.tex|27|1,simulation
+table.sim.S13.28,0.976,0,printed value,Supplementary Table S13,table|tables/tabS13_offset.tex|28|1,simulation
+table.sim.S13.29,0.957,0,printed value,Supplementary Table S13,table|tables/tabS13_offset.tex|29|1,simulation
+offset_batches.identical.n,107,0,count or score,"Results, O'Neil offset; Supplement S13","json|realdata/offset_batches.json|[""identical"", ""n""]",real
+offset_batches.identical.n_cell_lines,15,0,count or score,"Results, O'Neil offset; Supplement S13","json|realdata/offset_batches.json|[""identical"", ""n_cell_lines""]",real
+offset_batches.identical.mean_diff,0.079,0.0005,count or score,"Results, O'Neil offset; Supplement S13","json|realdata/offset_batches.json|[""identical"", ""mean_diff""]",real
+offset_batches.identical.mean_diff_lo,0.057,0.0005,count or score,"Results, O'Neil offset; Supplement S13","json|realdata/offset_batches.json|[""identical"", ""mean_diff_lo""]",real
+offset_batches.identical.mean_diff_hi,0.102,0.0005,count or score,"Results, O'Neil offset; Supplement S13","json|realdata/offset_batches.json|[""identical"", ""mean_diff_hi""]",real
+offset_batches.identical.sd_diff,0.059,0.0005,count or score,"Results, O'Neil offset; Supplement S13","json|realdata/offset_batches.json|[""identical"", ""sd_diff""]",real
+offset_batches.identical.sd_diff_no_offset,0.041,0.0005,count or score,"Results, O'Neil offset; Supplement S13","json|realdata/offset_batches.json|[""identical"", ""sd_diff_no_offset""]",real
+offset_batches.identical.median_se_b0,0.010,0.0005,count or score,"Results, O'Neil offset; Supplement S13","json|realdata/offset_batches.json|[""identical"", ""median_se_b0""]",real
+offset_batches.identical.median_se_b1,0.030,0.0005,count or score,"Results, O'Neil offset; Supplement S13","json|realdata/offset_batches.json|[""identical"", ""median_se_b1""]",real
+offset_batches.identical.robust_sd_z,2.09,0.005,count or score,"Results, O'Neil offset; Supplement S13","json|realdata/offset_batches.json|[""identical"", ""robust_sd_z""]",real
+offset_batches.identical.tau_equal_var,0.030,0.0005,count or score,"Results, O'Neil offset; Supplement S13","json|realdata/offset_batches.json|[""identical"", ""tau_equal_var""]",real
+offset_batches.all.n,315,0,count or score,"Results, O'Neil offset; Supplement S13","json|realdata/offset_batches.json|[""all"", ""n""]",real
+offset_batches.all.tau_equal_var,0.051,0.0005,count or score,"Results, O'Neil offset; Supplement S13","json|realdata/offset_batches.json|[""all"", ""tau_equal_var""]",real

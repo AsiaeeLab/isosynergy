@@ -3,8 +3,8 @@ message: "If you use SIR in your work, please cite the software (this record) an
 type: software
 title: "SIR: Isotonic Bliss Synergy Testing for Drug Combinations"
 abbreviation: "SIR"
-version: "0.2.0"
-date-released: "2026-10-11"
+version: "0.2.1"
+date-released: "2026-10-29"
 license: MIT
 doi: 10.5281/zenodo.20604671
 url: "https://doi.org/10.5281/zenodo.20604671"
@@ -53,7 +53,7 @@ identifiers:
     description: "bioRxiv preprint of the SIR method paper."
 preferred-citation:
   type: article
-  title: "SIR: shape-constrained, calibrated testing of Bliss synergy in drug combination dose-response matrices"
+  title: "A shape-constrained regression and wild bootstrap framework for reproducible drug synergy testing"
   doi: 10.64898/2026.02.05.704019
   year: 2026
   authors:

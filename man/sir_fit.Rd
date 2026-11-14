@@ -16,7 +16,7 @@ sir_fit(
   n_std = 200L,
   two_stage = TRUE,
   stage2_threshold = 0.05,
-  sa_replicates = Inf,
+  sa_replicates = NULL,
   sa_rho = 0.1,
   screen_replicates = TRUE,
   screen_c = 5,
@@ -58,7 +58,10 @@ p-value is at most \code{stage2_threshold}.}
 \item{stage2_threshold}{Stage-two trigger, default 0.05.}
 
 \item{sa_replicates}{For P, number of replicates underlying reported curves.
-\code{Inf} keeps edges fixed and tests synergy relative to those reported curves.}
+\code{Inf} keeps edges fixed and tests synergy relative to those reported curves.
+If left \code{NULL} in design P, the curves are treated as exact and a warning
+says so, because error in the curves or an offset between the combination
+plates and the curves then reads as synergy.}
 
 \item{sa_rho}{Correlated share of single-agent error, between zero and one.}
 

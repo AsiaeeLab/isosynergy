@@ -13,7 +13,7 @@ def main():
     ap.add_argument('stages', nargs='*', help='Stage numbers, 00 through 05; default all.')
     ap.add_argument('--smoke', action='store_true')
     ap.add_argument('--workers', type=int, default=int(os.environ.get('SIR_WORKERS','16')))
-    ap.add_argument('--item', choices=['bigl','grid','missing','head-to-head','references','bands','bigl-r','propositions','null-search','band-search','companions','resampling','runtime','band-order'])
+    ap.add_argument('--item', choices=['bigl','grid','missing','head-to-head','references','bands','bigl-r','propositions','null-search','band-search','companions','resampling','runtime','band-order','raw-benchmark','offset'])
     ap.add_argument('--reuse-simulations',action='store_true',help='Reuse simulation outputs only after validating their numerical-check seal.')
     ap.add_argument('--real-only', action='store_true', help='Stage 04 or 05: only real-data outputs.')
     ap.add_argument('--skip-bigl', action='store_true', help='Omit the optional R comparison; its figures require existing results.')
@@ -62,7 +62,7 @@ def main():
         run('02_realdata','null_summary.py')
         for study in ('oneil','almanac'):
             run('02_realdata','screen.py','--study',study,'--workers',args.workers,label='screen_'+study)
-        for script in ('families','release','reproducibility','controls','window','missing','counts','extra_numbers'):
+        for script in ('families','release','reproducibility','offset_batches','controls','window','missing','counts','extra_numbers'):
             run('02_realdata',script+'.py')
     if '03' in selected and args.reuse_simulations:
         import simulation_cache
@@ -106,6 +106,8 @@ def main():
         if item('null-search'):sim('null_search')
         if item('band-search'):sim('bb_search_check')
         if item('band-order'):sim('band_order')
+        if item('raw-benchmark'):sim('sim_raw_benchmark','--workers',args.workers)
+        if item('offset'):sim('sim_offset_oneil','--n',10000,'--workers',args.workers)
         if item('propositions'):
             for part in ('order','coupling','patterns','hill','mean','localization'):sim('propositions',part)
         if item('bigl-r') and not args.skip_bigl:
@@ -116,7 +118,7 @@ def main():
             sim('bigl_runtime')
     if '04' in selected:
         real=['fig1_baseline_disagreement','fig2_schematic','fig7_realdata_overview','figS3_positive_controls','figS4_baseline_scatter','figS5_baseline_nci_almanac','figS6_null_checks','tabS8_controls','tabS9_S11_realdata']
-        simulated=['tabS1_size','tabS2_misspec','tabS3_power','tabS4_stress','tabS5_bigl','tabS6_missing','tabS7_grid','sec6_numbers','fig3_head_to_head','fig4_grid_power','fig5_bigl','fig6_missing_outliers','figS1_reference_components','figS2_berger_boos','resampling_summary','supplement_numbers']
+        simulated=['tabS1_size','tabS2_misspec','tabS3_power','tabS4_stress','tabS5_bigl','tabS6_missing','tabS7_grid','sec6_numbers','fig3_head_to_head','fig4_grid_power','fig5_bigl','fig6_missing_outliers','figS1_reference_components','figS2_berger_boos','resampling_summary','supplement_numbers','tabS12_S13_revision']
         for script in real + ([] if args.real_only else simulated):
             run('04_figures_tables',script+'.py')
     if '05' in selected:

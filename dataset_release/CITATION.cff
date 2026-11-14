@@ -49,7 +49,7 @@ identifiers:
     description: "bioRxiv preprint of the SIR method paper."
 preferred-citation:
   type: article
-  title: "SIR: shape-constrained, calibrated testing of Bliss synergy in drug combination dose-response matrices"
+  title: "A shape-constrained regression and wild bootstrap framework for reproducible drug synergy testing"
   doi: 10.64898/2026.02.05.704019
   year: 2026
   authors:

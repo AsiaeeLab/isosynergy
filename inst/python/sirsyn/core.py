@@ -1,4 +1,6 @@
 """Analyze a drug-combination matrix with the plug-in exact-Bliss reference."""
+import warnings
+
 import numpy as np
 
 from . import _kernels as K
@@ -53,7 +55,7 @@ def _resolve_plate_var(plate_var, noise, mu0, Y, obs_int, group, log):
 
 
 def fit(Y, doses=None, design="S", noise=None, *, alpha=0.05, B=399, B2=9999, n_std=200, two_stage=True,
-        stage2_threshold=0.05, sa_replicates=np.inf, sa_rho=0.10, screen_replicates=True, screen_c=5.0,
+        stage2_threshold=0.05, sa_replicates=None, sa_rho=0.10, screen_replicates=True, screen_c=5.0,
         plate_var=None, group=None, fragility="auto", sd=None, seed=None, normalize="check",
         min_bank_pool=50):
     """Analyze one drug-combination matrix using the exact-Bliss reference.
@@ -64,6 +66,7 @@ def fit(Y, doses=None, design="S", noise=None, *, alpha=0.05, B=399, B2=9999, n_
     design   'S' single agents measured on the plate(s); 'R' replicated design S (m >= 2 plates, each with its
              own single-agent wells); 'P' single agents external (reported curves in row/column 0, exact when
              sa_replicates = inf, otherwise the mean of sa_replicates replicate curves with shift share sa_rho).
+             If sa_replicates is not given in design P, the curves are treated as exact and a warning says so.
     noise    ParametricNoise or NoiseBank (the reference law; its SD curve standardizes T_std unless `sd`).
     B, B2    reference plates of stage 1 and of the second stage, run when min(p_tstd, p_scan) of stage 1 is at
              most stage2_threshold (B2 = 9,999 resolves BH thresholds in screens).
@@ -98,6 +101,16 @@ def fit(Y, doses=None, design="S", noise=None, *, alpha=0.05, B=399, B2=9999, n_
         design = "R"
         log.note("design 'S' with replicate plates analyzed as replicated design S ('R')")
     dkey = "P" if design == "P" else "S"
+    if sa_replicates is None:
+        if dkey == "P":
+            warnings.warn("design P: sa_replicates not given, so the reported single-agent curves are treated as "
+                          "exact. The test is then relative to the reported curves, and error in the curves or an "
+                          "offset between the combination plates and the curves reads as synergy. Pass "
+                          "sa_replicates (replicate curves behind each reported curve) to carry curve uncertainty "
+                          "into the reference, or sa_replicates=numpy.inf to accept exact curves.",
+                          UserWarning, stacklevel=2)
+            log.note("design P: reported single-agent curves treated as exact (sa_replicates not given)")
+        sa_replicates = np.inf
     log.design, log.n_replicates, log.input_shape = design, m, (I0, J0)
     if isinstance(noise, NoiseBank):
         if noise.shape != (I0, J0):
@@ -193,6 +206,12 @@ def fit(Y, doses=None, design="S", noise=None, *, alpha=0.05, B=399, B2=9999, n_
     t_obs, mean_obs, reg_obs = T0[0], T0[1], T0[2:]
     a_hat, b_hat, th = K.iso_fit(np.ascontiguousarray(Yd), G.obs, G.pa, G.pb)
     mu0 = ref_mean(a_hat, b_hat)
+    if dkey == "P" and isinstance(noise, ParametricNoise) and noise.shift_sd(mu0) == 0:
+        warnings.warn("design P: the parametric reference has no plate shift (plate_shift_ratio = 0 and no "
+                      "plate_shift_sd), so a shift shared by the combination wells relative to the external "
+                      "single-agent reference reads as synergy. Set plate_shift_ratio or plate_shift_sd in the "
+                      "noise model if such shifts occur.", UserWarning, stacklevel=2)
+        log.note("design P: reference without a plate shift")
 
     pool = None
     if isinstance(noise, NoiseBank):

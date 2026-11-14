@@ -52,7 +52,13 @@ plot(fit)
 column holding the single agents. A replicate stack has dimensions
 `c(replicates, rows, columns)`. Missing wells are `NA`; values are not clipped to
 [0, 1]. The noise model should describe the assay; `sir_sd_from_replicates()` and
-`sir_noise_bank()` build one from replicate plates.
+`sir_noise_bank()` build one from replicate plates, and `sir_check_noise()` compares
+the replicate spread of wells with the SD a curve predicts, by bins of mean viability.
+The test is calibrated only when the noise model is correctly specified. In design P,
+`sir_fit()` warns when the reported single-agent curves are treated as exact
+(`sa_replicates` not given) and when a parametric reference has no plate shift,
+because an offset between the combination plates and the curves then reads as
+synergy.
 
 Main outputs:
 

@@ -25,6 +25,9 @@
 #' @param stage2_threshold Stage-two trigger, default 0.05.
 #' @param sa_replicates For P, number of replicates underlying reported curves.
 #'   `Inf` keeps edges fixed and tests synergy relative to those reported curves.
+#'   If left `NULL` in design P, the curves are treated as exact and a warning
+#'   says so, because error in the curves or an offset between the combination
+#'   plates and the curves then reads as synergy.
 #' @param sa_rho Correlated share of single-agent error, between zero and one.
 #' @param screen_replicates Screen discrepant replicates when at least three
 #'   values are available; the same rule is applied to reference plates.
@@ -87,12 +90,47 @@
 sir_fit <- function(Y, doses = NULL, design = c("S", "P", "R"), noise,
                     B = 399L, seed = NULL, alpha = 0.05, B2 = 9999L,
                     n_std = 200L, two_stage = TRUE, stage2_threshold = 0.05,
-                    sa_replicates = Inf, sa_rho = 0.10, screen_replicates = TRUE,
+                    sa_replicates = NULL, sa_rho = 0.10, screen_replicates = TRUE,
                     screen_c = 5, plate_var = NULL, group = NULL,
                     fragility = c("auto", "always", "never"), sd = NULL,
                     normalize = c("check", "divide", "ignore"), min_bank_pool = 50L) {
-  args <- .sir_fit_args(as.list(environment()))
-  .sir_result(do.call(.sir_python()$fit, args))
+  args <- .sir_design_checks(as.list(environment()))
+  args <- .sir_fit_args(args)
+  .sir_result(.sir_quiet(do.call(.sir_python()$fit, args)))
+}
+
+# Warn, in R, when design P silently assumes exact single-agent curves or a reference without a plate
+# shift; the Python warnings are then muffled so each message appears once.
+.sir_design_checks <- function(args) {
+  design <- match.arg(args$design, c("S", "P", "R"))
+  if (design == "P") {
+    if (is.null(args$sa_replicates)) {
+      warning("design P: sa_replicates not given, so the reported single-agent curves are treated as ",
+              "exact. The test is then relative to the reported curves, and error in the curves or an ",
+              "offset between the combination plates and the curves reads as synergy. Pass ",
+              "sa_replicates, or sa_replicates = Inf to accept exact curves.", call. = FALSE)
+    }
+    nz <- args$noise
+    if (inherits(nz, "sirsyn.noise.ParametricNoise")) {
+      ps <- reticulate::py_to_r(nz$plate_shift_sd)
+      ratio <- reticulate::py_to_r(nz$plate_shift_ratio)
+      if ((is.null(ps) && ratio == 0) || (!is.null(ps) && ps == 0))
+        warning("design P: the parametric reference has no plate shift, so a shift shared by the ",
+                "combination wells relative to the external single-agent reference reads as synergy. ",
+                "Set plate_shift_ratio or plate_shift_sd in sir_noise_parametric() if such shifts occur.",
+                call. = FALSE)
+    }
+  }
+  args
+}
+
+.sir_quiet <- function(expr) {
+  w <- reticulate::import("warnings", convert = FALSE)
+  ctx <- w$catch_warnings()
+  ctx$`__enter__`()
+  on.exit(ctx$`__exit__`(NULL, NULL, NULL), add = TRUE)
+  w$filterwarnings("ignore", message = "design P:")
+  expr
 }
 
 .sir_fit_args <- function(args) {
@@ -111,7 +149,7 @@ sir_fit <- function(Y, doses = NULL, design = c("S", "P", "R"), noise,
   for (nm in c("alpha", "stage2_threshold", "sa_rho"))
     args[[nm]] <- .sir_number(args[[nm]], nm, 0, 1)
   args$screen_c <- .sir_number(args$screen_c, "screen_c", .Machine$double.eps)
-  if (!identical(args$sa_replicates, Inf))
+  if (!is.null(args$sa_replicates) && !identical(args$sa_replicates, Inf))
     args$sa_replicates <- .sir_number(args$sa_replicates, "sa_replicates", 1)
   for (nm in c("two_stage", "screen_replicates"))
     if (!is.logical(args[[nm]]) || length(args[[nm]]) != 1L || is.na(args[[nm]]))

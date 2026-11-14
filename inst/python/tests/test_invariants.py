@@ -303,3 +303,24 @@ def test_screen_family_bh():
     rel = S.screen(sr.results, test="mean", relative_null=True)
     assert np.all(np.isfinite(rel.q))
 
+
+
+def test_design_p_warnings_and_sd_check():
+    import warnings
+    from sirsyn import simulate as sim
+    mu = sim.truth("null", "moderate", 5)
+    nz = S.ParametricNoise.oneil()
+    Y = sim.simulate(mu, nz, "P", 1, np.random.default_rng(1))[0]
+    with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter("always")
+        S.fit(Y, design="P", noise=nz, seed=1, B=39, n_std=9, two_stage=False)
+    msgs = " ".join(str(x.message) for x in w)
+    assert "sa_replicates not given" in msgs and "no plate shift" in msgs
+    with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter("always")
+        S.fit(Y, design="P", noise=S.ParametricNoise.oneil(plate_shift_ratio=0.25), sa_replicates=np.inf,
+              seed=1, B=39, n_std=9, two_stage=False)
+    assert not [x for x in w if "design P" in str(x.message)]
+    R = sim.simulate(mu, nz, "S", 200, np.random.default_rng(2), m=4)
+    rows = S.check_sd_curve(R, nz.sd)
+    assert rows and all(0.8 < r["ratio"] < 1.25 for r in rows)

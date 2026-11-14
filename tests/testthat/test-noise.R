@@ -41,3 +41,29 @@ test_that("Python help is non-installing and respects the interpreter environmen
   if (nzchar(Sys.getenv("RETICULATE_PYTHON")))
     expect_identical(normalizePath(cfg$python), normalizePath(Sys.getenv("RETICULATE_PYTHON")))
 })
+
+test_that("design P warns about exact curves and a missing plate shift", {
+  skip_without_python()
+  set.seed(4)
+  a <- c(1, 0.9, 0.7, 0.5, 0.3)
+  Y <- outer(a, a) + matrix(rnorm(25, sd = 0.03), 5)
+  Y[1, ] <- a; Y[, 1] <- a; Y[1, 1] <- 1
+  expect_warning(sir_fit(Y, design = "P", noise = sir_noise_parametric(sd = 0.03, plate_shift_ratio = 0.25),
+                         seed = 1, B = 39L, n_std = 9L, two_stage = FALSE), "sa_replicates not given")
+  expect_warning(sir_fit(Y, design = "P", noise = sir_noise_parametric(sd = 0.03), sa_replicates = Inf,
+                         seed = 1, B = 39L, n_std = 9L, two_stage = FALSE), "no plate shift")
+  expect_no_warning(sir_fit(Y, design = "P", noise = sir_noise_parametric(sd = 0.03, plate_shift_ratio = 0.25),
+                            sa_replicates = Inf, seed = 1, B = 39L, n_std = 9L, two_stage = FALSE))
+})
+
+test_that("sir_check_noise compares replicate spread with the curve", {
+  skip_without_python()
+  set.seed(5)
+  Y <- array(rnorm(200 * 3 * 5 * 5, 0.5, 0.05), c(200, 3, 5, 5))
+  Y[, , 1, 1] <- 1
+  chk <- sir_check_noise(Y, sir_noise_parametric(sd = 0.05))
+  expect_s3_class(chk, "data.frame")
+  expect_true(all(abs(chk$ratio - 1) < 0.1))
+  chk2 <- sir_check_noise(Y, sir_noise_parametric(sd = 0.1))
+  expect_true(all(chk2$ratio < 0.6))
+})

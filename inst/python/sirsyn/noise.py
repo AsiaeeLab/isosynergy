@@ -102,6 +102,44 @@ def sd_curve_from_replicates(Y, n_bins=13, min_wells=20, wells="combination"):
     return SDCurve("table", kv=kv[keep], ks=ks[keep])
 
 
+def check_sd_curve(Y, sd, n_bins=10, min_wells=20, wells="combination"):
+    """Diagnostic for an SD curve: compare the replicate spread of wells with the SD the curve predicts.
+    Y: (S, m, I, J) replicate plates (m >= 2), for example from the screen being analyzed or from a pilot.
+    sd: the SD curve to check (an SDCurve, or a noise model's .sd). Wells are binned by their replicate mean
+    into n_bins quantile bins. Returns one row per bin with the bin's mean viability, number of wells, observed
+    pooled single-replicate SD, the root mean of the curve's variance at the wells' means, and their ratio.
+    Use replicate sets that were not used to estimate the curve. Ratios far from 1 in bins that hold many of
+    the analyzed wells suggest the curve is misspecified there (0.8 to 1.25 is a heuristic band, not a
+    calibration threshold). The control and wells without replicate spread (copied design-P edges) are excluded."""
+    Y = np.asarray(Y, float)
+    if Y.ndim != 4 or Y.shape[1] < 2:
+        raise ValueError("Y must be (S, m, I, J) with m >= 2")
+    if wells == "combination":
+        sub = Y[:, :, 1:, 1:]
+    else:
+        sub = Y.copy()
+        sub[:, :, 0, 0] = np.nan
+    mean = np.nanmean(sub, 1).ravel()
+    var = np.nanvar(sub, 1, ddof=1).ravel()
+    ok = np.isfinite(mean) & np.isfinite(var)
+    if wells != "combination":
+        ok &= var > 0
+    mean, var = mean[ok], var[ok]
+    pred = np.asarray(sd(mean), float) ** 2
+    edges = np.quantile(mean, np.linspace(0, 1, n_bins + 1))
+    b = np.clip(np.digitize(mean, edges[1:-1]), 0, n_bins - 1)
+    rows = []
+    for j in range(n_bins):
+        k = b == j
+        if k.sum() < min_wells:
+            continue
+        m_bar = float(mean[k].mean())
+        obs_sd = float(np.sqrt(var[k].mean()))
+        mod_sd = float(np.sqrt(pred[k].mean()))
+        rows.append(dict(mean_viability=m_bar, n_wells=int(k.sum()), observed_sd=obs_sd, model_sd=mod_sd,
+                         ratio=obs_sd / mod_sd if mod_sd > 0 else np.nan))
+    return rows
+
 # ---------------------------------------------------------------------------
 # parametric noise
 # ---------------------------------------------------------------------------

@@ -48,6 +48,7 @@ sir_screen <- function(data, matrix_col = "Y", family_col = "family", q = 0.05,
     stop("... must contain named sir_fit arguments.", call. = FALSE)
   defaults <- lapply(formals(sir_fit)[setdiff(names(formals(sir_fit)), c("Y", "noise"))], eval)
   kw <- utils::modifyList(defaults, supplied, keep.null = TRUE)
+  kw <- .sir_design_checks(kw)
   items <- lapply(seq_len(nrow(data)), function(i) {
     a <- kw
     a$Y <- data[[matrix_col]][[i]]
@@ -58,9 +59,9 @@ sir_screen <- function(data, matrix_col = "Y", family_col = "family", q = 0.05,
     a$two_stage <- NULL
     a
   })
-  result <- .sir_python()$screen(items, family = as.list(as.character(data[[family_col]])),
+  result <- .sir_quiet(.sir_python()$screen(items, family = as.list(as.character(data[[family_col]])),
     q = q, test = test, relative_null = relative_null, nan_policy = nan_policy,
-    fit_kwargs = list(two_stage = kw$two_stage), n_workers = 1L, seed = seed)
+    fit_kwargs = list(two_stage = kw$two_stage), n_workers = 1L, seed = seed))
   fits <- lapply(reticulate::iterate(result$results, simplify = FALSE), .sir_result)
   out <- data
   for (nm in c("p", "q", "call")) out[[nm]] <- as.vector(reticulate::py_to_r(result[[nm]]))

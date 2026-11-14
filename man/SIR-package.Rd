@@ -15,8 +15,8 @@ Python is loaded lazily; see \code{\link[=sir_python_config]{sir_python_config()
 \seealso{
 Useful links:
 \itemize{
-  \item \url{https://github.com/AsiaeeLab/SIR}
-  \item Report bugs at \url{https://github.com/AsiaeeLab/SIR/issues}
+  \item \url{https://github.com/AsiaeeLab/isosynergy}
+  \item Report bugs at \url{https://github.com/AsiaeeLab/isosynergy/issues}
 }
 
 }

@@ -1,6 +1,6 @@
 Package: SIR
 Title: Isotonic Bliss Synergy Testing for Drug Combinations
-Version: 0.2.0
+Version: 0.2.1
 Authors@R: c(
     person("Amir", "Asiaee", , "amir.asiaeetaheri@vumc.org", role = c("aut", "cre")),
     person("James P.", "Long", role = "aut"),
